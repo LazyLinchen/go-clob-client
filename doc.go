@@ -3,6 +3,9 @@
 // This first iteration focuses on:
 //   - a reusable, concurrency-safe HTTP client core
 //   - public market-data endpoints that do not require authentication
+//   - L1/L2 authentication helpers and API key lifecycle
+//   - account balance/position reads
+//   - order reads, cancellation, and posting already-signed order payloads
 //
 // A Client is intended to be long-lived and reused across requests. By default,
 // clients share a pooled HTTP transport so connections can be kept alive and

@@ -29,7 +29,6 @@ func TestIntegrationCreateOrDeriveAPIKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateOrDeriveAPIKey() error = %v", err)
 	}
-	t.Log("CreateOrDeriveAPIKey() succeeded, got API key:", creds.APIKey)
 	assertNonEmptyCredentials(t, creds)
 
 	derivedCreds, err := client.DeriveAPIKey(ctx, params)
@@ -50,9 +49,19 @@ func newLiveAuthTestClient(t *testing.T) (*Client, L1AuthParams) {
 		t.Skip("set POLYMARKET_RUN_LIVE_AUTH_TEST=run-live to run the live Polymarket L1 auth integration test")
 	}
 
+	return newLiveClient(t)
+}
+
+func newLiveClient(t *testing.T) (*Client, L1AuthParams) {
+	t.Helper()
+
+	if err := loadDotEnv(".env"); err != nil {
+		t.Fatalf("load .env: %v", err)
+	}
+
 	privateKey := strings.TrimSpace(os.Getenv("POLYMARKET_PRIVATE_KEY"))
 	if privateKey == "" {
-		t.Skip("set POLYMARKET_PRIVATE_KEY to run the live Polymarket L1 auth integration test")
+		t.Skip("set POLYMARKET_PRIVATE_KEY to run the live Polymarket integration tests")
 	}
 
 	signer, err := NewPrivateKeySigner(privateKey)
@@ -84,19 +93,50 @@ func newLiveAuthTestClient(t *testing.T) (*Client, L1AuthParams) {
 	}
 
 	client, err := NewClient(ClientConfig{
-		Host:     host,
-		ChainID:  chainID,
-		Signer:   signer,
-		Timeout:  20 * time.Second,
-		ProxyURL: strings.TrimSpace(os.Getenv("POLYMARKET_PROXY_URL")),
-		UseServerTime: strings.EqualFold(strings.TrimSpace(os.Getenv("POLYMARKET_USE_SERVER_TIME")), "1") ||
-			strings.EqualFold(strings.TrimSpace(os.Getenv("POLYMARKET_USE_SERVER_TIME")), "true"),
+		Host:          host,
+		ChainID:       chainID,
+		Signer:        signer,
+		Timeout:       20 * time.Second,
+		ProxyURL:      strings.TrimSpace(os.Getenv("POLYMARKET_PROXY_URL")),
+		SignatureType: liveSignatureType(t),
+		UseServerTime: liveUseServerTime(),
 	})
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 
 	return client, L1AuthParams{Nonce: nonce}
+}
+
+func liveUseServerTime() bool {
+	raw := strings.TrimSpace(os.Getenv("POLYMARKET_USE_SERVER_TIME"))
+	if raw == "" {
+		return true
+	}
+
+	return strings.EqualFold(raw, "1") || strings.EqualFold(raw, "true")
+}
+
+func liveSignatureType(t *testing.T) SignatureType {
+	t.Helper()
+
+	raw := strings.TrimSpace(os.Getenv("POLYMARKET_SIGNATURE_TYPE"))
+	if raw == "" {
+		return SignatureTypeEOA
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		t.Fatalf("parse POLYMARKET_SIGNATURE_TYPE: %v", err)
+	}
+
+	switch SignatureType(value) {
+	case SignatureTypeEOA, SignatureTypePolyProxy, SignatureTypePolyGnosisSafe, SignatureTypePoly1271:
+		return SignatureType(value)
+	default:
+		t.Fatalf("unsupported POLYMARKET_SIGNATURE_TYPE: %d", value)
+		return SignatureTypeEOA
+	}
 }
 
 func assertNonEmptyCredentials(t *testing.T, creds *APICredentials) {

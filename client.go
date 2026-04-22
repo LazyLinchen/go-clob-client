@@ -15,6 +15,7 @@ import (
 
 const (
 	DefaultHost      = "https://clob.polymarket.com"
+	DefaultDataHost  = "https://data-api.polymarket.com"
 	DefaultChainID   = 137
 	DefaultTimeout   = 15 * time.Second
 	defaultUserAgent = "go-clob-client/0.1"
@@ -25,23 +26,29 @@ var proxyTransportCache sync.Map
 
 type ClientConfig struct {
 	Host          string
+	DataHost      string
 	ChainID       int64
 	HTTPClient    *http.Client
+	Credentials   *APICredentials
 	Timeout       time.Duration
 	UserAgent     string
 	Signer        L1Signer
 	ProxyURL      string
 	UseServerTime bool
+	SignatureType SignatureType
 }
 
 // Client is safe for concurrent use by multiple goroutines.
 type Client struct {
 	baseURL       *url.URL
+	dataBaseURL   *url.URL
 	chainID       int64
 	httpClient    *http.Client
 	userAgent     string
 	signer        L1Signer
+	creds         *APICredentials
 	useServerTime bool
+	signatureType SignatureType
 }
 
 func NewClient(cfg ClientConfig) (*Client, error) {
@@ -59,6 +66,21 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	}
 	if baseURL.Scheme != "http" && baseURL.Scheme != "https" {
 		return nil, fmt.Errorf("unsupported host scheme %q", baseURL.Scheme)
+	}
+
+	dataHost := strings.TrimSpace(cfg.DataHost)
+	if dataHost == "" {
+		dataHost = DefaultDataHost
+	}
+	dataBaseURL, err := url.Parse(dataHost)
+	if err != nil {
+		return nil, fmt.Errorf("parse data host: %w", err)
+	}
+	if dataBaseURL.Scheme == "" || dataBaseURL.Host == "" {
+		return nil, fmt.Errorf("invalid data host %q: expected absolute http(s) URL", dataHost)
+	}
+	if dataBaseURL.Scheme != "http" && dataBaseURL.Scheme != "https" {
+		return nil, fmt.Errorf("unsupported data host scheme %q", dataBaseURL.Scheme)
 	}
 
 	chainID := cfg.ChainID
@@ -106,16 +128,23 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 
 	return &Client{
 		baseURL:       baseURL,
+		dataBaseURL:   dataBaseURL,
 		chainID:       chainID,
 		httpClient:    httpClient,
 		userAgent:     userAgent,
 		signer:        cfg.Signer,
+		creds:         normalizedCredentials(cfg.Credentials),
 		useServerTime: cfg.UseServerTime,
+		signatureType: cfg.SignatureType,
 	}, nil
 }
 
 func (c *Client) BaseURL() string {
 	return c.baseURL.String()
+}
+
+func (c *Client) DataBaseURL() string {
+	return c.dataBaseURL.String()
 }
 
 func (c *Client) ChainID() int64 {
@@ -124,6 +153,20 @@ func (c *Client) ChainID() int64 {
 
 func (c *Client) Signer() L1Signer {
 	return c.signer
+}
+
+func (c *Client) Credentials() *APICredentials {
+	return normalizedCredentials(c.creds)
+}
+
+func (c *Client) WithCredentials(creds *APICredentials) *Client {
+	cloned := *c
+	cloned.creds = normalizedCredentials(creds)
+	return &cloned
+}
+
+func (c *Client) SignatureType() SignatureType {
+	return c.signatureType
 }
 
 func (c *Client) CloseIdleConnections() {
@@ -195,8 +238,22 @@ func parseProxyURL(rawProxyURL string) (*url.URL, error) {
 }
 
 func (c *Client) buildURL(endpoint string, query url.Values) string {
+	return c.buildURLFromBase(c.baseURL, endpoint, query)
+}
+
+func (c *Client) buildDataURL(endpoint string, query url.Values) string {
+	return c.buildURLFromBase(c.dataBaseURL, endpoint, query)
+}
+
+func (c *Client) buildURLFromBase(base *url.URL, endpoint string, query url.Values) string {
 	u := *c.baseURL
+	if base != nil {
+		u = *base
+	}
 	u.Path = joinURLPath(c.baseURL.Path, endpoint)
+	if base != nil {
+		u.Path = joinURLPath(base.Path, endpoint)
+	}
 	u.RawQuery = ""
 	if len(query) > 0 {
 		u.RawQuery = query.Encode()
@@ -228,6 +285,18 @@ func (c *Client) newRequest(
 	body any,
 	headers http.Header,
 ) (*http.Request, error) {
+	return c.newRequestToBase(ctx, c.baseURL, method, endpoint, query, body, headers)
+}
+
+func (c *Client) newRequestToBase(
+	ctx context.Context,
+	base *url.URL,
+	method string,
+	endpoint string,
+	query url.Values,
+	body any,
+	headers http.Header,
+) (*http.Request, error) {
 	var bodyReader io.Reader
 	if body != nil {
 		payload, err := encodeJSON(body)
@@ -237,7 +306,7 @@ func (c *Client) newRequest(
 		bodyReader = bytes.NewReader(payload)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, c.buildURL(endpoint, query), bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, c.buildURLFromBase(base, endpoint, query), bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -267,7 +336,20 @@ func (c *Client) doJSON(
 	headers http.Header,
 	dest any,
 ) error {
-	req, err := c.newRequest(ctx, method, endpoint, query, body, headers)
+	return c.doJSONBase(ctx, c.baseURL, method, endpoint, query, body, headers, dest)
+}
+
+func (c *Client) doJSONBase(
+	ctx context.Context,
+	base *url.URL,
+	method string,
+	endpoint string,
+	query url.Values,
+	body any,
+	headers http.Header,
+	dest any,
+) error {
+	req, err := c.newRequestToBase(ctx, base, method, endpoint, query, body, headers)
 	if err != nil {
 		return err
 	}
@@ -303,7 +385,7 @@ func (c *Client) doBytes(
 	query url.Values,
 	headers http.Header,
 ) ([]byte, error) {
-	req, err := c.newRequest(ctx, method, endpoint, query, nil, headers)
+	req, err := c.newRequestToBase(ctx, c.baseURL, method, endpoint, query, nil, headers)
 	if err != nil {
 		return nil, err
 	}
@@ -327,6 +409,15 @@ func (c *Client) doBytes(
 }
 
 func encodeJSON(v any) ([]byte, error) {
+	switch body := v.(type) {
+	case nil:
+		return nil, nil
+	case []byte:
+		return body, nil
+	case json.RawMessage:
+		return []byte(body), nil
+	}
+
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)

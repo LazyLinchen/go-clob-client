@@ -288,6 +288,8 @@ internal/httputil/
 
 - 第一版先支持显式传入 `signatureType` 和 `funderAddress`
 - 自动推导 funder 放到后续阶段
+- 实测上不要把 `signatureType=0 (EOA)` 当作 Polymarket.com 账户的安全默认值；常见账户更可能需要 `2 (GNOSIS_SAFE)`
+- 余额查询与下单必须复用同一套 `signatureType` / funder 上下文，否则容易出现“能登录但余额为 0”或“余额正常但下单失败”
 
 ## 8. 开发里程碑
 
@@ -313,10 +315,22 @@ internal/httputil/
 
 ## 10. 下一步建议
 
-按当前计划，下一步最合理的动作不是直接做下单，而是：
+截至 2026-04-22，本地代码已基本覆盖 `Phase 1` 到 `Phase 5` 的第一版目标：
 
-1. 先实现 `Phase 1 + Phase 2`
-2. 然后完成 `Phase 3`
-3. 再去核对官方 SDK 源码，决定 `Phase 5/6` 的 order schema
+- `Phase 1`: 核心 HTTP client
+- `Phase 2`: Public methods
+- `Phase 3`: L1 auth / API key
+- `Phase 4`: L2 headers、订单查询/撤单、余额查询
+- `Phase 5`: `PostOrder` 已支持“提交外部已签名 payload”
 
-这样可以尽快得到一个稳定可用、且不容易因为 V2 文档冲突而返工的 Go 客户端基础版本。
+后续最合理的动作变为：
+
+1. 继续核对官方 SDK 源码，确认 V2 order schema、`owner` 来源和 HMAC canonical string 的最终规则
+2. 补二阶段交易端点：
+   - `CancelOrders`
+   - `CancelAllOrders`
+   - `CancelMarketOrders`
+   - `SendHeartbeat`
+3. 在源码核对完成后，再实现 `Phase 6` 的自动构造与签名能力
+
+这样可以继续扩大可用接口面，同时避免把可能错误的 V2 订单结构过早固化进库中。
