@@ -99,6 +99,8 @@ func newLiveClient(t *testing.T) (*Client, L1AuthParams) {
 		Timeout:       20 * time.Second,
 		ProxyURL:      strings.TrimSpace(os.Getenv("POLYMARKET_PROXY_URL")),
 		SignatureType: liveSignatureType(t),
+		FunderAddress: strings.TrimSpace(os.Getenv("POLYMARKET_FUNDER_ADDRESS")),
+		CLOBVersion:   liveCLOBVersion(t),
 		UseServerTime: liveUseServerTime(),
 	})
 	if err != nil {
@@ -106,6 +108,20 @@ func newLiveClient(t *testing.T) (*Client, L1AuthParams) {
 	}
 
 	return client, L1AuthParams{Nonce: nonce}
+}
+
+func liveCLOBVersion(t *testing.T) CLOBVersion {
+	t.Helper()
+
+	raw := strings.TrimSpace(os.Getenv("POLYMARKET_CLOB_VERSION"))
+	if raw == "" {
+		return CLOBVersionV2
+	}
+	version, err := normalizeCLOBVersion(CLOBVersion(raw))
+	if err != nil {
+		t.Fatalf("parse POLYMARKET_CLOB_VERSION: %v", err)
+	}
+	return version
 }
 
 func liveUseServerTime() bool {

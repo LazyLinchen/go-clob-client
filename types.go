@@ -6,19 +6,25 @@ import (
 	"fmt"
 )
 
+// Side 表示订单或报价方向。
 type Side string
 
 const (
-	SideBuy  Side = "BUY"
+	// SideBuy 表示买入方向。
+	SideBuy Side = "BUY"
+	// SideSell 表示卖出方向。
 	SideSell Side = "SELL"
 )
 
+// NumberString 用字符串形式保存数值，避免精度丢失。
 type NumberString string
 
+// String 返回原始字符串表示。
 func (n NumberString) String() string {
 	return string(n)
 }
 
+// UnmarshalJSON 兼容字符串、数字和 null 三种常见 JSON 数值表示。
 func (n *NumberString) UnmarshalJSON(data []byte) error {
 	data = bytes.TrimSpace(data)
 	if bytes.Equal(data, []byte("null")) {
@@ -46,11 +52,13 @@ func (n *NumberString) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// BookLevel 表示盘口中的一个价位档位。
 type BookLevel struct {
 	Price NumberString `json:"price"`
 	Size  NumberString `json:"size"`
 }
 
+// OrderBook 表示某个 token 的完整盘口快照。
 type OrderBook struct {
 	Market         string       `json:"market"`
 	AssetID        string       `json:"asset_id"`
@@ -64,10 +72,12 @@ type OrderBook struct {
 	LastTradePrice NumberString `json:"last_trade_price"`
 }
 
+// PriceResponse 表示价格查询接口响应。
 type PriceResponse struct {
 	Price NumberString `json:"price"`
 }
 
+// UnmarshalJSON 兼容标量和对象两种价格返回格式。
 func (r *PriceResponse) UnmarshalJSON(data []byte) error {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil
@@ -92,10 +102,12 @@ func (r *PriceResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// MidpointResponse 表示中间价查询接口响应。
 type MidpointResponse struct {
 	Midpoint NumberString
 }
 
+// UnmarshalJSON 兼容 mid_price、mid 以及纯标量三种返回格式。
 func (r *MidpointResponse) UnmarshalJSON(data []byte) error {
 	if looksLikeScalarJSON(data) {
 		return json.Unmarshal(data, &r.Midpoint)
@@ -119,10 +131,12 @@ func (r *MidpointResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// SpreadResponse 表示价差查询接口响应。
 type SpreadResponse struct {
 	Spread NumberString `json:"spread"`
 }
 
+// UnmarshalJSON 兼容标量和对象两种价差返回格式。
 func (r *SpreadResponse) UnmarshalJSON(data []byte) error {
 	if looksLikeScalarJSON(data) {
 		return json.Unmarshal(data, &r.Spread)
@@ -138,10 +152,12 @@ func (r *SpreadResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// TickSizeResponse 表示最小跳动单位查询接口响应。
 type TickSizeResponse struct {
 	MinimumTickSize NumberString `json:"minimum_tick_size"`
 }
 
+// UnmarshalJSON 兼容 minimum_tick_size、tick_size 以及纯标量格式。
 func (r *TickSizeResponse) UnmarshalJSON(data []byte) error {
 	if looksLikeScalarJSON(data) {
 		return json.Unmarshal(data, &r.MinimumTickSize)
@@ -165,6 +181,7 @@ func (r *TickSizeResponse) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// CLOBMarketToken 表示市场信息中的单个 outcome token。
 type CLOBMarketToken struct {
 	TokenID string       `json:"t"`
 	Outcome string       `json:"o"`
@@ -172,6 +189,7 @@ type CLOBMarketToken struct {
 	Winner  bool         `json:"winner"`
 }
 
+// UnmarshalJSON 兼容长字段名和短字段名两套返回格式。
 func (t *CLOBMarketToken) UnmarshalJSON(data []byte) error {
 	var wire struct {
 		TokenIDShort string       `json:"t"`
@@ -204,12 +222,14 @@ func (t *CLOBMarketToken) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// FeeDetails 表示市场费率细节。
 type FeeDetails struct {
 	Rate      NumberString `json:"r"`
 	Exponent  int64        `json:"e"`
 	TakerOnly bool         `json:"to"`
 }
 
+// CLOBMarketInfo 表示扩展市场信息接口返回的市场元数据。
 type CLOBMarketInfo struct {
 	GameStartTime          string            `json:"gst"`
 	Rewards                json.RawMessage   `json:"r"`
@@ -225,6 +245,7 @@ type CLOBMarketInfo struct {
 	MinimumOrderAgeSeconds int64             `json:"oas"`
 }
 
+// UnmarshalJSON 兼容官方文档中的长字段名和线上接口的短字段名。
 func (m *CLOBMarketInfo) UnmarshalJSON(data []byte) error {
 	var wire struct {
 		GameStartTimeShort     string            `json:"gst"`
@@ -307,6 +328,7 @@ func (m *CLOBMarketInfo) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// looksLikeScalarJSON 用于区分标量响应和对象响应，方便兼容历史接口格式。
 func looksLikeScalarJSON(data []byte) bool {
 	data = bytes.TrimSpace(data)
 	if len(data) == 0 {

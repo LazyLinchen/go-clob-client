@@ -17,19 +17,23 @@ import (
 const (
 	clobAuthDomainName    = "ClobAuthDomain"
 	clobAuthDomainVersion = "1"
-	ClobAuthMessage       = "This message attests that I control the given wallet"
+	// ClobAuthMessage 是 Polymarket L1 EIP-712 签名中的固定文案。
+	ClobAuthMessage = "This message attests that I control the given wallet"
 )
 
+// L1Signer 定义生成 Polymarket L1 鉴权签名所需的最小能力。
 type L1Signer interface {
 	Address() string
 	SignTypedData(ctx context.Context, typedData apitypes.TypedData) (string, error)
 }
 
+// PrivateKeySigner 使用本地 ECDSA 私钥生成 L1 签名。
 type PrivateKeySigner struct {
 	privateKey *ecdsa.PrivateKey
 	address    common.Address
 }
 
+// NewPrivateKeySigner 从十六进制私钥字符串创建签名器。
 func NewPrivateKeySigner(privateKeyHex string) (*PrivateKeySigner, error) {
 	privateKeyHex = strings.TrimSpace(privateKeyHex)
 	privateKeyHex = strings.TrimPrefix(privateKeyHex, "0x")
@@ -45,6 +49,7 @@ func NewPrivateKeySigner(privateKeyHex string) (*PrivateKeySigner, error) {
 	return NewPrivateKeySignerFromECDSA(privateKey), nil
 }
 
+// NewPrivateKeySignerFromECDSA 从 go-ethereum 的私钥对象创建签名器。
 func NewPrivateKeySignerFromECDSA(privateKey *ecdsa.PrivateKey) *PrivateKeySigner {
 	address := crypto.PubkeyToAddress(privateKey.PublicKey)
 	return &PrivateKeySigner{
@@ -53,10 +58,12 @@ func NewPrivateKeySignerFromECDSA(privateKey *ecdsa.PrivateKey) *PrivateKeySigne
 	}
 }
 
+// Address 返回签名器对应的钱包地址。
 func (s *PrivateKeySigner) Address() string {
 	return s.address.Hex()
 }
 
+// SignTypedData 对 EIP-712 typed data 进行签名并返回十六进制编码结果。
 func (s *PrivateKeySigner) SignTypedData(_ context.Context, typedData apitypes.TypedData) (string, error) {
 	digest, _, err := apitypes.TypedDataAndHash(typedData)
 	if err != nil {
@@ -68,11 +75,12 @@ func (s *PrivateKeySigner) SignTypedData(_ context.Context, typedData apitypes.T
 		return "", fmt.Errorf("sign typed data: %w", err)
 	}
 
-	// Match wallet-style serialized signatures where V is 27/28.
+	// 对齐常见钱包的序列化格式，让 V 落在 27/28。
 	signature[64] += 27
 	return hexutil.Encode(signature), nil
 }
 
+// BuildClobAuthTypedData 构造 Polymarket L1 鉴权所需的 EIP-712 结构体。
 func BuildClobAuthTypedData(address string, chainID int64, timestamp int64, nonce uint64) apitypes.TypedData {
 	return apitypes.TypedData{
 		Types: apitypes.Types{

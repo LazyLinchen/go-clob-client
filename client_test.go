@@ -34,6 +34,57 @@ func TestNewClientDefaultsShareTransport(t *testing.T) {
 	if first.BaseURL() != DefaultHost {
 		t.Fatalf("BaseURL() = %q, want %q", first.BaseURL(), DefaultHost)
 	}
+	if first.CLOBVersion() != CLOBVersionV2 {
+		t.Fatalf("CLOBVersion() = %q, want %q", first.CLOBVersion(), CLOBVersionV2)
+	}
+}
+
+func TestNewClientFunderAddress(t *testing.T) {
+	t.Parallel()
+
+	client, err := NewClient(ClientConfig{
+		FunderAddress: "0x1111111111111111111111111111111111111111",
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	if client.FunderAddress() != "0x1111111111111111111111111111111111111111" {
+		t.Fatalf("FunderAddress() = %q", client.FunderAddress())
+	}
+
+	cloned, err := client.WithFunderAddress("0x2222222222222222222222222222222222222222")
+	if err != nil {
+		t.Fatalf("WithFunderAddress() error = %v", err)
+	}
+	if cloned.FunderAddress() != "0x2222222222222222222222222222222222222222" {
+		t.Fatalf("cloned.FunderAddress() = %q", cloned.FunderAddress())
+	}
+
+	if _, err := NewClient(ClientConfig{FunderAddress: "not-an-address"}); err == nil {
+		t.Fatal("expected invalid funder address error")
+	}
+	if _, err := client.WithFunderAddress("not-an-address"); err == nil {
+		t.Fatal("expected invalid funder address error")
+	}
+}
+
+func TestNewClientCLOBVersionSelectsDefaultHost(t *testing.T) {
+	t.Parallel()
+
+	v1Client, err := NewClient(ClientConfig{CLOBVersion: CLOBVersionV1})
+	if err != nil {
+		t.Fatalf("NewClient(V1) error = %v", err)
+	}
+	if v1Client.CLOBVersion() != CLOBVersionV1 {
+		t.Fatalf("V1 CLOBVersion() = %q", v1Client.CLOBVersion())
+	}
+	if v1Client.BaseURL() != ProductionHost {
+		t.Fatalf("V1 BaseURL() = %q, want %q", v1Client.BaseURL(), ProductionHost)
+	}
+
+	if _, err := NewClient(ClientConfig{CLOBVersion: "v3"}); err == nil {
+		t.Fatal("expected unsupported CLOB version error")
+	}
 }
 
 func TestNewClientWithProxySharesProxyTransport(t *testing.T) {

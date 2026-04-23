@@ -148,23 +148,38 @@
 
 - 只要外部提供的 payload 与官方接口兼容，库即可完成提交
 
-### Phase 6: 自动构造与签名 V2 订单
+### Phase 6: 自动构造与签名订单
 
-前置条件：
+已确认并落地的 V2 限价单规则：
 
-- 必须核对官方 SDK 源码
-- 必须确认以下问题：
-  - V2 order struct 最终字段集合
-  - `expiration` 是否仍参与签名
-  - `taker`、`nonce`、`feeRateBps` 是否在 wire payload 中必须保留
-  - `owner` 的真实来源
-  - neg-risk 与普通 market 的 `verifyingContract` 选择逻辑
+- EIP-712 domain: `Polymarket CTF Exchange`, version `2`
+- V2 签名字段：`salt`、`maker`、`signer`、`tokenId`、`makerAmount`、`takerAmount`、`side`、`signatureType`、`timestamp`、`metadata`、`builder`
+- `expiration` 保留在 wire payload 中，但不参与 V2 typed-data 签名
+- V2 限价单不再把 `taker`、`nonce`、`feeRateBps` 放入签名结构
+- 普通 market 与 neg-risk market 通过不同 V2 exchange `verifyingContract` 区分
+- V1 与 V2 签名结构不兼容，必须通过 `CLOBVersion` 显式分支
+- V1 兼容分支保留 `taker`、`nonce`、`feeRateBps`，并使用旧版 exchange 合约
 
-完成后再实现：
+已实现：
 
+- `CLOBVersionV1` / `CLOBVersionV2` 版本分流
 - `CreateOrder()`
-- `SignOrder()`
+- `CreateMarketOrder()`
+- `CalculateMarketOrderPrice()`
+- `SignOrderV2()`
+- `CreatePostOrderRequest()`
+- `CreatePostMarketOrderRequest()`
 - `CreateAndPostOrder()`
+- `CreateAndPostMarketOrder()`
+- 下单 `owner` 留空时默认使用 L2 API key
+- 客户端级 `FunderAddress` 配置，用于 proxy wallet / safe 资金地址
+- 非 EOA `signatureType` 缺少 funder 时本地直接报错，避免服务端 `invalid signature`
+
+后续仍需补齐：
+
+- proxy wallet / safe funder 自动发现
+- builder code / builder fee 高级封装
+- 真实 `PostOrder` live 集成测试实盘验证
 
 ## 4. 建议目录结构
 
@@ -305,32 +320,31 @@ internal/httputil/
 
 ## 9. 当前待确认问题
 
-在开始写订单签名代码前，必须回答下面几个问题：
+订单签名第一版已按官方 SDK 源码完成。当前仍需确认下面几个问题：
 
-1. V2 最终签名结构到底保留哪些字段
-2. `owner` 到底如何获得
-3. L2 HMAC 的 canonical string 具体规则
-4. neg-risk 市场下如何自动切换 `verifyingContract`
-5. `builder` 字段是否允许全零默认值，以及何时必须携带
+1. funder / proxy wallet 是否能从公开接口自动推导
+2. `builder` 字段何时必须携带非零值
+3. 真实 `PostOrder` 在不同 `signatureType` / funder 组合下的服务端行为
 
 ## 10. 下一步建议
 
-截至 2026-04-22，本地代码已基本覆盖 `Phase 1` 到 `Phase 5` 的第一版目标：
+截至 2026-04-23，本地代码已覆盖 `Phase 1` 到 `Phase 5`，并完成 `Phase 6` 的 V2 限价单与 market order 第一版：
 
 - `Phase 1`: 核心 HTTP client
 - `Phase 2`: Public methods
 - `Phase 3`: L1 auth / API key
-- `Phase 4`: L2 headers、订单查询/撤单、余额查询
-- `Phase 5`: `PostOrder` 已支持“提交外部已签名 payload”
+- `Phase 4`: L2 headers、余额查询、订单查询/撤单、全撤、按市场撤单、heartbeat、order scoring
+- `Phase 5`: `PostOrder` / `PostOrders` 已支持“提交外部已签名 payload”
+- `Phase 6`: `CreateOrder` / `CreateMarketOrder` / `SignOrderV2` / `CreateAndPostOrder` / `CreateAndPostMarketOrder` 已支持 V1/V2 版本分流、构造、签名和提交链路
+- 当前默认订单 schema 使用 V2；如需兼容旧服务端，显式设置 `CLOBVersionV1` 或 `POLYMARKET_CLOB_VERSION=v1`
 
 后续最合理的动作变为：
 
-1. 继续核对官方 SDK 源码，确认 V2 order schema、`owner` 来源和 HMAC canonical string 的最终规则
-2. 补二阶段交易端点：
-   - `CancelOrders`
-   - `CancelAllOrders`
-   - `CancelMarketOrders`
-   - `SendHeartbeat`
-3. 在源码核对完成后，再实现 `Phase 6` 的自动构造与签名能力
+1. 补 live 集成测试，优先覆盖：
+   - `GetUserOrders`
+   - `CancelOrder` / `CancelOrders`
+   - `CreateAndPostMarketOrder`（仅在测试账户和最小风险场景下）
+2. 补 proxy wallet / safe funder 自动发现，减少调用方手工传参
+3. 视需要增加 builder code / builder fee 相关封装
 
-这样可以继续扩大可用接口面，同时避免把可能错误的 V2 订单结构过早固化进库中。
+这样可以继续扩大可用接口面，同时把真实下单风险控制在显式 opt-in 的 live 测试中。

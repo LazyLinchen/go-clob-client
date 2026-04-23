@@ -1,13 +1,12 @@
-// Package clobclient provides a Go client for the Polymarket CLOB API.
+// Package clobclient 提供面向 Polymarket CLOB API 的 Go 客户端。
 //
-// This first iteration focuses on:
-//   - a reusable, concurrency-safe HTTP client core
-//   - public market-data endpoints that do not require authentication
-//   - L1/L2 authentication helpers and API key lifecycle
-//   - account balance/position reads
-//   - order reads, cancellation, and posting already-signed order payloads
+// 当前版本主要覆盖以下能力：
+//   - 可复用且支持并发安全的 HTTP 客户端核心
+//   - 无需鉴权的公开市场数据接口
+//   - L1/L2 鉴权辅助方法与 API Key 生命周期管理
+//   - 账户余额、授权额度与持仓查询
+//   - 订单查询、评分/心跳、撤单、V2 限价单与 market order 构造签名以及订单提交
 //
-// A Client is intended to be long-lived and reused across requests. By default,
-// clients share a pooled HTTP transport so connections can be kept alive and
-// reused instead of creating a new transport per request.
+// Client 设计为长生命周期对象，建议在进程内复用。默认情况下，
+// 多个客户端实例会共享连接池传输层，以便复用 Keep-Alive 连接。
 package clobclient

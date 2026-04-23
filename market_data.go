@@ -8,10 +8,12 @@ import (
 	"strings"
 )
 
+// GetOK 调用健康检查接口并返回原始响应体。
 func (c *Client) GetOK(ctx context.Context) ([]byte, error) {
 	return c.doBytes(ctx, http.MethodGet, "/ok", nil, nil)
 }
 
+// GetServerTime 获取服务端当前 Unix 时间戳。
 func (c *Client) GetServerTime(ctx context.Context) (int64, error) {
 	var ts int64
 	if err := c.doJSON(ctx, http.MethodGet, "/time", nil, nil, nil, &ts); err != nil {
@@ -20,6 +22,7 @@ func (c *Client) GetServerTime(ctx context.Context) (int64, error) {
 	return ts, nil
 }
 
+// GetOrderBook 获取指定 token 的盘口深度。
 func (c *Client) GetOrderBook(ctx context.Context, tokenID string) (*OrderBook, error) {
 	tokenID = strings.TrimSpace(tokenID)
 	if tokenID == "" {
@@ -33,6 +36,7 @@ func (c *Client) GetOrderBook(ctx context.Context, tokenID string) (*OrderBook, 
 	return &book, nil
 }
 
+// GetPrice 获取指定 token 在给定方向上的价格。
 func (c *Client) GetPrice(ctx context.Context, tokenID string, side Side) (*PriceResponse, error) {
 	tokenID = strings.TrimSpace(tokenID)
 	if tokenID == "" {
@@ -55,6 +59,7 @@ func (c *Client) GetPrice(ctx context.Context, tokenID string, side Side) (*Pric
 	return &response, nil
 }
 
+// GetMidpoint 获取指定 token 的中间价。
 func (c *Client) GetMidpoint(ctx context.Context, tokenID string) (*MidpointResponse, error) {
 	tokenID = strings.TrimSpace(tokenID)
 	if tokenID == "" {
@@ -68,6 +73,7 @@ func (c *Client) GetMidpoint(ctx context.Context, tokenID string) (*MidpointResp
 	return &response, nil
 }
 
+// GetSpread 获取指定 token 的买卖价差。
 func (c *Client) GetSpread(ctx context.Context, tokenID string) (*SpreadResponse, error) {
 	tokenID = strings.TrimSpace(tokenID)
 	if tokenID == "" {
@@ -81,6 +87,7 @@ func (c *Client) GetSpread(ctx context.Context, tokenID string) (*SpreadResponse
 	return &response, nil
 }
 
+// GetTickSize 获取指定 token 的最小跳动单位。
 func (c *Client) GetTickSize(ctx context.Context, tokenID string) (*TickSizeResponse, error) {
 	tokenID = strings.TrimSpace(tokenID)
 	if tokenID == "" {
@@ -94,6 +101,7 @@ func (c *Client) GetTickSize(ctx context.Context, tokenID string) (*TickSizeResp
 	return &response, nil
 }
 
+// GetCLOBMarketInfo 获取指定条件市场的扩展市场信息。
 func (c *Client) GetCLOBMarketInfo(ctx context.Context, conditionID string) (*CLOBMarketInfo, error) {
 	conditionID = strings.TrimSpace(conditionID)
 	if conditionID == "" {
@@ -108,6 +116,7 @@ func (c *Client) GetCLOBMarketInfo(ctx context.Context, conditionID string) (*CL
 	return &response, nil
 }
 
+// normalizeSide 将买卖方向标准化为服务端接受的枚举值。
 func normalizeSide(side Side) (Side, error) {
 	switch normalized := Side(strings.ToUpper(strings.TrimSpace(string(side)))); normalized {
 	case SideBuy:

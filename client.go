@@ -11,34 +11,68 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ethereum/go-ethereum/common"
 )
 
 const (
-	DefaultHost      = "https://clob.polymarket.com"
-	DefaultDataHost  = "https://data-api.polymarket.com"
-	DefaultChainID   = 137
+	// DefaultHost 是当前 V2 交易 API 的默认主机地址。
+	DefaultHost = "https://clob-v2.polymarket.com"
+	// ProductionHost 是 Polymarket CLOB 生产主机地址；实际订单 schema 取决于服务端当前版本。
+	ProductionHost = "https://clob.polymarket.com"
+	// DefaultDataHost 是公开数据 API 的默认主机地址。
+	DefaultDataHost = "https://data-api.polymarket.com"
+	// DefaultChainID 是 Polymarket 当前默认使用的链 ID。
+	DefaultChainID = 137
+	// DefaultTimeout 是内置 HTTP 客户端的默认超时时间。
 	DefaultTimeout   = 15 * time.Second
 	defaultUserAgent = "go-clob-client/0.1"
+)
+
+// CLOBVersion 表示 Polymarket CLOB 订单签名和 payload schema 版本。
+type CLOBVersion string
+
+const (
+	// CLOBVersionV1 使用旧版 CTF Exchange 订单结构。
+	CLOBVersionV1 CLOBVersion = "v1"
+	// CLOBVersionV2 使用当前 CTF Exchange V2 订单结构。
+	CLOBVersionV2 CLOBVersion = "v2"
 )
 
 var sharedTransport = newDefaultTransport()
 var proxyTransportCache sync.Map
 
+// ClientConfig 定义创建客户端时可选的基础配置。
 type ClientConfig struct {
-	Host          string
-	DataHost      string
-	ChainID       int64
-	HTTPClient    *http.Client
-	Credentials   *APICredentials
-	Timeout       time.Duration
-	UserAgent     string
-	Signer        L1Signer
-	ProxyURL      string
+	// Host 指定交易 API 的根地址，留空时使用 DefaultHost。
+	Host string
+	// DataHost 指定公开数据 API 的根地址，留空时使用 DefaultDataHost。
+	DataHost string
+	// ChainID 用于 L1 签名中的 EIP-712 域信息，留空时使用 DefaultChainID。
+	ChainID int64
+	// HTTPClient 允许调用方注入自定义 HTTP 客户端。
+	HTTPClient *http.Client
+	// Credentials 是用于 L2 鉴权的 API 凭证。
+	Credentials *APICredentials
+	// Timeout 会覆盖默认 HTTP 客户端的超时配置。
+	Timeout time.Duration
+	// UserAgent 指定请求头中的 User-Agent，留空时使用默认值。
+	UserAgent string
+	// Signer 是用于 L1 鉴权和地址识别的签名器。
+	Signer L1Signer
+	// ProxyURL 为请求配置显式代理地址。
+	ProxyURL string
+	// UseServerTime 表示签名时优先读取服务端时间，减少本地时钟漂移影响。
 	UseServerTime bool
+	// SignatureType 指定账户相关接口使用的签名类型枚举值。
 	SignatureType SignatureType
+	// FunderAddress 是实际持有资金的地址；留空时订单 maker 默认使用 signer 地址。
+	FunderAddress string
+	// CLOBVersion 控制订单签名和 payload schema，留空时默认使用 V2。
+	CLOBVersion CLOBVersion
 }
 
-// Client is safe for concurrent use by multiple goroutines.
+// Client 是 Polymarket CLOB API 的客户端，可安全地被多个 goroutine 并发复用。
 type Client struct {
 	baseURL       *url.URL
 	dataBaseURL   *url.URL
@@ -49,12 +83,20 @@ type Client struct {
 	creds         *APICredentials
 	useServerTime bool
 	signatureType SignatureType
+	funderAddress string
+	clobVersion   CLOBVersion
 }
 
+// NewClient 根据配置创建一个可复用的 API 客户端。
 func NewClient(cfg ClientConfig) (*Client, error) {
+	clobVersion, err := normalizeCLOBVersion(cfg.CLOBVersion)
+	if err != nil {
+		return nil, err
+	}
+
 	host := strings.TrimSpace(cfg.Host)
 	if host == "" {
-		host = DefaultHost
+		host = defaultHostForCLOBVersion(clobVersion)
 	}
 
 	baseURL, err := url.Parse(host)
@@ -126,6 +168,14 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		userAgent = defaultUserAgent
 	}
 
+	funderAddress := strings.TrimSpace(cfg.FunderAddress)
+	if funderAddress != "" {
+		if !common.IsHexAddress(funderAddress) {
+			return nil, fmt.Errorf("invalid funder address %q", funderAddress)
+		}
+		funderAddress = common.HexToAddress(funderAddress).Hex()
+	}
+
 	return &Client{
 		baseURL:       baseURL,
 		dataBaseURL:   dataBaseURL,
@@ -136,39 +186,74 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		creds:         normalizedCredentials(cfg.Credentials),
 		useServerTime: cfg.UseServerTime,
 		signatureType: cfg.SignatureType,
+		funderAddress: funderAddress,
+		clobVersion:   clobVersion,
 	}, nil
 }
 
+// BaseURL 返回交易 API 的根地址。
 func (c *Client) BaseURL() string {
 	return c.baseURL.String()
 }
 
+// DataBaseURL 返回公开数据 API 的根地址。
 func (c *Client) DataBaseURL() string {
 	return c.dataBaseURL.String()
 }
 
+// ChainID 返回当前客户端用于签名的链 ID。
 func (c *Client) ChainID() int64 {
 	return c.chainID
 }
 
+// Signer 返回当前客户端配置的 L1 签名器。
 func (c *Client) Signer() L1Signer {
 	return c.signer
 }
 
+// Credentials 返回当前客户端持有的 L2 API 凭证副本。
 func (c *Client) Credentials() *APICredentials {
 	return normalizedCredentials(c.creds)
 }
 
+// WithCredentials 返回一个共享底层配置、但使用新凭证的客户端副本。
 func (c *Client) WithCredentials(creds *APICredentials) *Client {
 	cloned := *c
 	cloned.creds = normalizedCredentials(creds)
 	return &cloned
 }
 
+// FunderAddress 返回订单 maker 默认使用的资金地址；为空表示回退到 signer 地址。
+func (c *Client) FunderAddress() string {
+	return c.funderAddress
+}
+
+// WithFunderAddress 返回一个共享底层配置、但使用新资金地址的客户端副本。
+func (c *Client) WithFunderAddress(funderAddress string) (*Client, error) {
+	funderAddress = strings.TrimSpace(funderAddress)
+	if funderAddress != "" {
+		if !common.IsHexAddress(funderAddress) {
+			return nil, fmt.Errorf("invalid funder address %q", funderAddress)
+		}
+		funderAddress = common.HexToAddress(funderAddress).Hex()
+	}
+
+	cloned := *c
+	cloned.funderAddress = funderAddress
+	return &cloned, nil
+}
+
+// SignatureType 返回当前客户端使用的签名类型。
 func (c *Client) SignatureType() SignatureType {
 	return c.signatureType
 }
 
+// CLOBVersion 返回当前客户端默认使用的订单 schema 版本。
+func (c *Client) CLOBVersion() CLOBVersion {
+	return c.clobVersion
+}
+
+// CloseIdleConnections 主动关闭底层 HTTP 连接池中的空闲连接。
 func (c *Client) CloseIdleConnections() {
 	if c.httpClient != nil {
 		c.httpClient.CloseIdleConnections()
@@ -184,6 +269,7 @@ func newDefaultTransport() *http.Transport {
 	return transport
 }
 
+// transportForProxy 为指定代理地址返回可复用的传输层实例。
 func transportForProxy(rawProxyURL string) (*http.Transport, error) {
 	rawProxyURL = strings.TrimSpace(rawProxyURL)
 	if rawProxyURL == "" {
@@ -206,6 +292,7 @@ func transportForProxy(rawProxyURL string) (*http.Transport, error) {
 	return actual.(*http.Transport), nil
 }
 
+// cloneTransportWithProxy 基于已有 transport 克隆一个带代理配置的新实例。
 func cloneTransportWithProxy(existing http.RoundTripper, rawProxyURL string) (*http.Transport, error) {
 	proxyURL, err := parseProxyURL(rawProxyURL)
 	if err != nil {
@@ -226,6 +313,7 @@ func cloneTransportWithProxy(existing http.RoundTripper, rawProxyURL string) (*h
 	return cloned, nil
 }
 
+// parseProxyURL 校验并解析代理地址。
 func parseProxyURL(rawProxyURL string) (*url.URL, error) {
 	proxyURL, err := url.Parse(strings.TrimSpace(rawProxyURL))
 	if err != nil {
@@ -235,6 +323,26 @@ func parseProxyURL(rawProxyURL string) (*url.URL, error) {
 		return nil, fmt.Errorf("invalid proxy URL %q: expected absolute URL", rawProxyURL)
 	}
 	return proxyURL, nil
+}
+
+func normalizeCLOBVersion(version CLOBVersion) (CLOBVersion, error) {
+	normalized := CLOBVersion(strings.ToLower(strings.TrimSpace(string(version))))
+	if normalized == "" {
+		return CLOBVersionV2, nil
+	}
+	switch normalized {
+	case CLOBVersionV1, CLOBVersionV2:
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("unsupported CLOB version %q", version)
+	}
+}
+
+func defaultHostForCLOBVersion(version CLOBVersion) string {
+	if version == CLOBVersionV1 {
+		return ProductionHost
+	}
+	return DefaultHost
 }
 
 func (c *Client) buildURL(endpoint string, query url.Values) string {
@@ -418,6 +526,7 @@ func encodeJSON(v any) ([]byte, error) {
 		return []byte(body), nil
 	}
 
+	// 统一关闭 HTML 转义，避免签名和透传 JSON 时出现不必要的内容变化。
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
