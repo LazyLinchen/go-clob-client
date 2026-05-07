@@ -1,4 +1,4 @@
-module gogs.xelaly.com/lorry/go-clob-client.git
+module github.com/LazyLinchen/go-clob-client.git
 
 go 1.24.0
 
