@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -34,8 +35,8 @@ func TestNewClientDefaultsShareTransport(t *testing.T) {
 	if first.BaseURL() != DefaultHost {
 		t.Fatalf("BaseURL() = %q, want %q", first.BaseURL(), DefaultHost)
 	}
-	if first.CLOBVersion() != CLOBVersionV2 {
-		t.Fatalf("CLOBVersion() = %q, want %q", first.CLOBVersion(), CLOBVersionV2)
+	if DefaultHost != "https://clob.polymarket.com" {
+		t.Fatalf("DefaultHost = %q, want production CLOB host", DefaultHost)
 	}
 }
 
@@ -68,22 +69,63 @@ func TestNewClientFunderAddress(t *testing.T) {
 	}
 }
 
-func TestNewClientCLOBVersionSelectsDefaultHost(t *testing.T) {
+func TestNewClientAutoDiscoverFunder(t *testing.T) {
 	t.Parallel()
 
-	v1Client, err := NewClient(ClientConfig{CLOBVersion: CLOBVersionV1})
+	client, err := NewClient(ClientConfig{
+		AutoDiscoverFunder: true,
+	})
 	if err != nil {
-		t.Fatalf("NewClient(V1) error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
-	if v1Client.CLOBVersion() != CLOBVersionV1 {
-		t.Fatalf("V1 CLOBVersion() = %q", v1Client.CLOBVersion())
-	}
-	if v1Client.BaseURL() != ProductionHost {
-		t.Fatalf("V1 BaseURL() = %q, want %q", v1Client.BaseURL(), ProductionHost)
+	if !client.AutoDiscoverFunder() {
+		t.Fatal("AutoDiscoverFunder() = false, want true")
 	}
 
-	if _, err := NewClient(ClientConfig{CLOBVersion: "v3"}); err == nil {
-		t.Fatal("expected unsupported CLOB version error")
+	cloned := client.WithAutoDiscoverFunder(false)
+	if cloned.AutoDiscoverFunder() {
+		t.Fatal("cloned.AutoDiscoverFunder() = true, want false")
+	}
+	if !client.AutoDiscoverFunder() {
+		t.Fatal("original client should remain unchanged")
+	}
+}
+
+func TestNewClientBuilderCode(t *testing.T) {
+	t.Parallel()
+
+	builderCode := "0x1111111111111111111111111111111111111111111111111111111111111111"
+	client, err := NewClient(ClientConfig{
+		BuilderCode: builderCode,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	if client.BuilderCode() != builderCode {
+		t.Fatalf("BuilderCode() = %q, want %q", client.BuilderCode(), builderCode)
+	}
+
+	cloned, err := client.WithBuilderCode("0x2222222222222222222222222222222222222222222222222222222222222222")
+	if err != nil {
+		t.Fatalf("WithBuilderCode() error = %v", err)
+	}
+	if cloned.BuilderCode() != "0x2222222222222222222222222222222222222222222222222222222222222222" {
+		t.Fatalf("cloned.BuilderCode() = %q", cloned.BuilderCode())
+	}
+	if client.BuilderCode() != builderCode {
+		t.Fatal("original client should remain unchanged")
+	}
+
+	empty, err := client.WithBuilderCode(ZeroBytes32)
+	if err != nil {
+		t.Fatalf("WithBuilderCode(zero) error = %v", err)
+	}
+	if empty.BuilderCode() != "" {
+		t.Fatalf("empty.BuilderCode() = %q, want empty", empty.BuilderCode())
+	}
+
+	if _, err := NewClient(ClientConfig{BuilderCode: "0x1234"}); err == nil {
+		t.Fatal("expected invalid builder code error")
 	}
 }
 
@@ -287,6 +329,13 @@ func TestPublicPriceEndpointsHandleMixedNumericShapes(t *testing.T) {
 			_, _ = w.Write([]byte(`{"spread":"0.01"}`))
 		case "/tick-size":
 			_, _ = w.Write([]byte(`{"minimum_tick_size":0.01}`))
+		case "/neg-risk":
+			if got := r.URL.Query().Get("token_id"); got != "asset-123" {
+				t.Fatalf("token_id = %q, want asset-123", got)
+			}
+			_, _ = w.Write([]byte(`{"neg_risk":true}`))
+		case "/markets-by-token/asset-123":
+			_, _ = w.Write([]byte(`{"condition_id":"condition-1"}`))
 		case "/clob-markets/condition-1":
 			_, _ = w.Write([]byte(`{
 				"gst":"2023-11-07T05:31:56Z",
@@ -345,6 +394,22 @@ func TestPublicPriceEndpointsHandleMixedNumericShapes(t *testing.T) {
 		t.Fatalf("MinimumTickSize = %q, want 0.01", tickSize.MinimumTickSize)
 	}
 
+	negRisk, err := client.GetNegRisk(context.Background(), "asset-123")
+	if err != nil {
+		t.Fatalf("GetNegRisk() error = %v", err)
+	}
+	if !negRisk.NegRisk {
+		t.Fatal("NegRisk = false, want true")
+	}
+
+	marketByToken, err := client.GetMarketByToken(context.Background(), "asset-123")
+	if err != nil {
+		t.Fatalf("GetMarketByToken() error = %v", err)
+	}
+	if marketByToken.ConditionID != "condition-1" {
+		t.Fatalf("ConditionID = %q, want condition-1", marketByToken.ConditionID)
+	}
+
 	marketInfo, err := client.GetCLOBMarketInfo(context.Background(), "condition-1")
 	if err != nil {
 		t.Fatalf("GetCLOBMarketInfo() error = %v", err)
@@ -388,5 +453,36 @@ func TestAPIErrorIncludesMessage(t *testing.T) {
 	}
 	if apiErr.Message != "rate limited" {
 		t.Fatalf("Message = %q, want rate limited", apiErr.Message)
+	}
+}
+
+func TestAPIErrorUsesStatusForHTMLBody(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`<!DOCTYPE html><html><title>Attention Required</title></html>`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(ClientConfig{Host: server.URL})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.GetSpread(context.Background(), "asset-123")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("error type = %T, want *APIError", err)
+	}
+	if apiErr.Message != "403 Forbidden" {
+		t.Fatalf("Message = %q, want 403 Forbidden", apiErr.Message)
+	}
+	if !strings.Contains(apiErr.Body, "Attention Required") {
+		t.Fatalf("Body = %q, want raw HTML body retained", apiErr.Body)
 	}
 }

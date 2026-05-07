@@ -16,10 +16,8 @@ import (
 )
 
 const (
-	// DefaultHost 是当前 V2 交易 API 的默认主机地址。
-	DefaultHost = "https://clob-v2.polymarket.com"
-	// ProductionHost 是 Polymarket CLOB 生产主机地址；实际订单 schema 取决于服务端当前版本。
-	ProductionHost = "https://clob.polymarket.com"
+	// DefaultHost 是当前生产交易 API 的默认主机地址。
+	DefaultHost = "https://clob.polymarket.com"
 	// DefaultDataHost 是公开数据 API 的默认主机地址。
 	DefaultDataHost = "https://data-api.polymarket.com"
 	// DefaultChainID 是 Polymarket 当前默认使用的链 ID。
@@ -27,16 +25,6 @@ const (
 	// DefaultTimeout 是内置 HTTP 客户端的默认超时时间。
 	DefaultTimeout   = 15 * time.Second
 	defaultUserAgent = "go-clob-client/0.1"
-)
-
-// CLOBVersion 表示 Polymarket CLOB 订单签名和 payload schema 版本。
-type CLOBVersion string
-
-const (
-	// CLOBVersionV1 使用旧版 CTF Exchange 订单结构。
-	CLOBVersionV1 CLOBVersion = "v1"
-	// CLOBVersionV2 使用当前 CTF Exchange V2 订单结构。
-	CLOBVersionV2 CLOBVersion = "v2"
 )
 
 var sharedTransport = newDefaultTransport()
@@ -68,35 +56,33 @@ type ClientConfig struct {
 	SignatureType SignatureType
 	// FunderAddress 是实际持有资金的地址；留空时订单 maker 默认使用 signer 地址。
 	FunderAddress string
-	// CLOBVersion 控制订单签名和 payload schema，留空时默认使用 V2。
-	CLOBVersion CLOBVersion
+	// AutoDiscoverFunder 控制是否在非 EOA 场景下，按当前上下文自动推导 maker/funder。
+	AutoDiscoverFunder bool
+	// BuilderCode 是 V2 订单默认携带的 builder bytes32 code；留空表示不作为 builder order。
+	BuilderCode string
 }
 
 // Client 是 Polymarket CLOB API 的客户端，可安全地被多个 goroutine 并发复用。
 type Client struct {
-	baseURL       *url.URL
-	dataBaseURL   *url.URL
-	chainID       int64
-	httpClient    *http.Client
-	userAgent     string
-	signer        L1Signer
-	creds         *APICredentials
-	useServerTime bool
-	signatureType SignatureType
-	funderAddress string
-	clobVersion   CLOBVersion
+	baseURL            *url.URL
+	dataBaseURL        *url.URL
+	chainID            int64
+	httpClient         *http.Client
+	userAgent          string
+	signer             L1Signer
+	creds              *APICredentials
+	useServerTime      bool
+	signatureType      SignatureType
+	funderAddress      string
+	autoDiscoverFunder bool
+	builderCode        string
 }
 
 // NewClient 根据配置创建一个可复用的 API 客户端。
 func NewClient(cfg ClientConfig) (*Client, error) {
-	clobVersion, err := normalizeCLOBVersion(cfg.CLOBVersion)
-	if err != nil {
-		return nil, err
-	}
-
 	host := strings.TrimSpace(cfg.Host)
 	if host == "" {
-		host = defaultHostForCLOBVersion(clobVersion)
+		host = DefaultHost
 	}
 
 	baseURL, err := url.Parse(host)
@@ -176,18 +162,24 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		funderAddress = common.HexToAddress(funderAddress).Hex()
 	}
 
+	builderCode, err := normalizeOptionalBuilderCode(cfg.BuilderCode)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Client{
-		baseURL:       baseURL,
-		dataBaseURL:   dataBaseURL,
-		chainID:       chainID,
-		httpClient:    httpClient,
-		userAgent:     userAgent,
-		signer:        cfg.Signer,
-		creds:         normalizedCredentials(cfg.Credentials),
-		useServerTime: cfg.UseServerTime,
-		signatureType: cfg.SignatureType,
-		funderAddress: funderAddress,
-		clobVersion:   clobVersion,
+		baseURL:            baseURL,
+		dataBaseURL:        dataBaseURL,
+		chainID:            chainID,
+		httpClient:         httpClient,
+		userAgent:          userAgent,
+		signer:             cfg.Signer,
+		creds:              normalizedCredentials(cfg.Credentials),
+		useServerTime:      cfg.UseServerTime,
+		signatureType:      cfg.SignatureType,
+		funderAddress:      funderAddress,
+		autoDiscoverFunder: cfg.AutoDiscoverFunder,
+		builderCode:        builderCode,
 	}, nil
 }
 
@@ -228,6 +220,11 @@ func (c *Client) FunderAddress() string {
 	return c.funderAddress
 }
 
+// AutoDiscoverFunder 返回当前客户端是否启用了下单前自动发现 funder。
+func (c *Client) AutoDiscoverFunder() bool {
+	return c.autoDiscoverFunder
+}
+
 // WithFunderAddress 返回一个共享底层配置、但使用新资金地址的客户端副本。
 func (c *Client) WithFunderAddress(funderAddress string) (*Client, error) {
 	funderAddress = strings.TrimSpace(funderAddress)
@@ -243,14 +240,33 @@ func (c *Client) WithFunderAddress(funderAddress string) (*Client, error) {
 	return &cloned, nil
 }
 
+// WithAutoDiscoverFunder 返回一个共享底层配置、但切换自动发现开关的客户端副本。
+func (c *Client) WithAutoDiscoverFunder(enabled bool) *Client {
+	cloned := *c
+	cloned.autoDiscoverFunder = enabled
+	return &cloned
+}
+
+// BuilderCode 返回当前客户端默认携带的 V2 builder bytes32 code。
+func (c *Client) BuilderCode() string {
+	return c.builderCode
+}
+
+// WithBuilderCode 返回一个共享底层配置、但使用新默认 builder code 的客户端副本。
+func (c *Client) WithBuilderCode(builderCode string) (*Client, error) {
+	normalized, err := normalizeOptionalBuilderCode(builderCode)
+	if err != nil {
+		return nil, err
+	}
+
+	cloned := *c
+	cloned.builderCode = normalized
+	return &cloned, nil
+}
+
 // SignatureType 返回当前客户端使用的签名类型。
 func (c *Client) SignatureType() SignatureType {
 	return c.signatureType
-}
-
-// CLOBVersion 返回当前客户端默认使用的订单 schema 版本。
-func (c *Client) CLOBVersion() CLOBVersion {
-	return c.clobVersion
 }
 
 // CloseIdleConnections 主动关闭底层 HTTP 连接池中的空闲连接。
@@ -323,26 +339,6 @@ func parseProxyURL(rawProxyURL string) (*url.URL, error) {
 		return nil, fmt.Errorf("invalid proxy URL %q: expected absolute URL", rawProxyURL)
 	}
 	return proxyURL, nil
-}
-
-func normalizeCLOBVersion(version CLOBVersion) (CLOBVersion, error) {
-	normalized := CLOBVersion(strings.ToLower(strings.TrimSpace(string(version))))
-	if normalized == "" {
-		return CLOBVersionV2, nil
-	}
-	switch normalized {
-	case CLOBVersionV1, CLOBVersionV2:
-		return normalized, nil
-	default:
-		return "", fmt.Errorf("unsupported CLOB version %q", version)
-	}
-}
-
-func defaultHostForCLOBVersion(version CLOBVersion) string {
-	if version == CLOBVersionV1 {
-		return ProductionHost
-	}
-	return DefaultHost
 }
 
 func (c *Client) buildURL(endpoint string, query url.Values) string {

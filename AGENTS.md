@@ -5,19 +5,21 @@
 
 ## Build, Test, and Development Commands
 - `go build ./...` builds the module and catches compile regressions.
-- `go test ./...` runs the default unit test suite.
-- `go test ./... -cover` reports statement coverage; the current baseline is about `73.7%`.
+- `go test ./... -run '^Test[^I]' -count=1` runs the local deterministic suite while excluding `TestIntegration...` live tests.
+- `go test ./... -run '^Test[^I]' -cover` reports statement coverage for the non-live suite; the current baseline is about `73.7%`.
 - `go test ./... -run TestIntegrationCreateOrDeriveAPIKey -count=1` runs the live L1 auth test.
 - `go test ./... -run TestIntegrationGetBalanceAllowance -count=1` runs the live L2 balance test.
+- `go test ./... -run TestIntegrationCreatePostAndCancelOrder -count=1 -v` runs the live GTC post-and-cancel order test.
+- `go test ./... -run TestIntegrationCreatePostMarketBuyThenSellOrder -count=1 -v` runs the live market BUY-then-SELL roundtrip test.
 
 ## Coding Style & Naming Conventions
 Use standard Go formatting: tabs for indentation, `gofmt` before commit, and Go-style exported names (`NewClient`, `BuildL2Headers`) with unexported helpers in lower camel case. Keep files focused on one API area and place tests next to the code they exercise. Name test files `*_test.go`; reserve `*_integration_test.go` for tests that touch real Polymarket services.
 
 ## Testing Guidelines
-Write table-driven unit tests where practical and keep them deterministic. Integration tests must stay opt-in and guard themselves with environment checks, as the current live tests do. Before opening a PR, run `go test ./...` and `go test ./... -cover`; add or update tests for any public API, auth flow, or error-handling change.
+Write table-driven unit tests where practical and keep them deterministic. Integration tests are manually targeted with exact `-run TestIntegration...` commands and read live credentials from `.env`; because live gates have been removed, avoid broad `go test ./...` unless intentionally running production-facing tests. Before opening a PR, run the non-live test and coverage commands above; add or update tests for any public API, auth flow, or error-handling change.
 
 ## Commit & Pull Request Guidelines
 The existing history follows Conventional Commit style with optional scopes, for example `feat(auth): ...`. Keep commit subjects short and imperative; use a scope when the change is localized. PRs should include a clear summary, the commands you ran (`go test ./...`, coverage, or targeted live tests), and any `.env` or API-behavior changes. For request/response changes, include sample payloads rather than screenshots.
 
 ## Security & Configuration Tips
-`.env` is ignored and used by live tests. Never commit private keys, API secrets, or real credentials. Treat integration tests as production-facing: they can create or derive live API credentials and should only run when the required `POLYMARKET_RUN_LIVE_*` variables are explicitly set.
+`.env` is ignored and used by live tests. Never commit private keys, API secrets, or real credentials. Treat integration tests as production-facing: they can create or derive live API credentials, place orders, and sell positions, so run them only with an exact `-run TestIntegration...` target and prepared account/token/funder configuration.

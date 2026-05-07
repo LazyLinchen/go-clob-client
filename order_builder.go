@@ -12,27 +12,11 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	gethmath "github.com/ethereum/go-ethereum/common/math"
-	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 )
 
 const (
 	// ZeroBytes32 是 V2 订单 metadata / builder 字段的默认空值。
 	ZeroBytes32 = "0x0000000000000000000000000000000000000000000000000000000000000000"
-	// ZeroAddress 是 V1 订单 taker 字段的默认空地址。
-	ZeroAddress = "0x0000000000000000000000000000000000000000"
-
-	ctfExchangeDomainName      = "Polymarket CTF Exchange"
-	ctfExchangeV2DomainName    = ctfExchangeDomainName
-	ctfExchangeV1DomainVersion = "1"
-	ctfExchangeV2DomainVersion = "2"
-
-	polygonExchangeV1        = "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E"
-	polygonNegRiskExchangeV1 = "0xC5d563A36AE78145C45a50134d48A1215220f80a"
-	polygonExchangeV2        = "0xE111180000d2663C0091e4f400237545B87B996B"
-	polygonNegRiskExchangeV2 = "0xe2222d279d744050d28e00520010520000310F59"
-	amoyExchangeV2           = "0xE111180000d2663C0091e4f400237545B87B996B"
-	amoyNegRiskExchangeV2    = "0xe2222d279d744050d28e00520010520000310F59"
 
 	collateralTokenDecimals = 6
 )
@@ -65,8 +49,6 @@ type orderRoundConfig struct {
 
 // CreateOrderParams 描述本地构造并签名 V2 限价单所需的参数。
 type CreateOrderParams struct {
-	// Version 控制订单签名和 payload schema，留空时使用客户端默认版本。
-	Version CLOBVersion
 	// Maker 是实际出资地址，留空时优先使用客户端 FunderAddress，再回退到 signer 地址。
 	Maker string
 	// TokenID 是要交易的条件 token ID。
@@ -85,24 +67,18 @@ type CreateOrderParams struct {
 	Metadata string
 	// Builder 是 V2 订单 builder bytes32，留空时使用 ZeroBytes32。
 	Builder string
+	// BuilderCode 是 Builder 字段的明确别名；留空时使用客户端默认 builder code。
+	BuilderCode string
 	// Expiration 是订单过期时间，Unix seconds；0 表示不过期。
 	Expiration int64
 	// TimestampMS 是订单时间戳，Unix milliseconds；0 表示使用当前时间。
 	TimestampMS int64
 	// Salt 允许测试或高级调用方显式指定 salt；留空时自动生成。
 	Salt string
-	// Taker 是 V1 订单 taker 地址，留空时使用 ZeroAddress；V2 不参与签名和 payload。
-	Taker string
-	// Nonce 是 V1 订单 nonce，必须非负；V2 不参与签名和 payload。
-	Nonce int64
-	// FeeRateBps 是 V1 订单 feeRateBps，必须非负；V2 不参与签名和 payload。
-	FeeRateBps int64
 }
 
 // CreateMarketOrderParams 描述本地构造并签名 V2 market order 所需的参数。
 type CreateMarketOrderParams struct {
-	// Version 控制订单签名和 payload schema，留空时使用客户端默认版本。
-	Version CLOBVersion
 	// Maker 是实际出资地址，留空时优先使用客户端 FunderAddress，再回退到 signer 地址。
 	Maker string
 	// TokenID 是要交易的条件 token ID。
@@ -123,18 +99,20 @@ type CreateMarketOrderParams struct {
 	Metadata string
 	// Builder 是 V2 订单 builder bytes32，留空时使用 ZeroBytes32。
 	Builder string
+	// BuilderCode 是 Builder 字段的明确别名；留空时使用客户端默认 builder code。
+	BuilderCode string
+	// UserUSDCBalance 启用 BUY market order 的 fee-aware amount 调整，避免 amount+fees 超出可用 USDC。
+	UserUSDCBalance string
+	// FeeInfo 允许调用方显式传入 V2 market fee 参数；留空且 UserUSDCBalance 生效时会自动查询。
+	FeeInfo *MarketFeeInfo
+	// BuilderTakerFeeBps 允许调用方显式传入 builder taker fee bps；留空且 builder code 非零时会自动查询。
+	BuilderTakerFeeBps *int64
 	// Expiration 是订单过期时间，Unix seconds；0 表示不过期。
 	Expiration int64
 	// TimestampMS 是订单时间戳，Unix milliseconds；0 表示使用当前时间。
 	TimestampMS int64
 	// Salt 允许测试或高级调用方显式指定 salt；留空时自动生成。
 	Salt string
-	// Taker 是 V1 订单 taker 地址，留空时使用 ZeroAddress；V2 不参与签名和 payload。
-	Taker string
-	// Nonce 是 V1 订单 nonce，必须非负；V2 不参与签名和 payload。
-	Nonce int64
-	// FeeRateBps 是 V1 订单 feeRateBps，必须非负；V2 不参与签名和 payload。
-	FeeRateBps int64
 }
 
 // CreatePostOrderRequestParams 描述构造可直接提交给 PostOrder 的 V2 限价单参数。
@@ -171,69 +149,13 @@ type MarketOrderPriceParams struct {
 	OrderType OrderType
 }
 
-// SignOrderV2Options 描述签名已有 V2 订单时的合约选择。
-type SignOrderV2Options struct {
-	// Version 控制签名 schema，留空时按 order.Version 或客户端默认版本选择。
-	Version CLOBVersion
-	// ExchangeAddress 允许显式覆盖 verifyingContract；留空时按 ChainID 和 NegRisk 选择默认 V2 合约。
-	ExchangeAddress string
-	// NegRisk 控制默认合约选择。
-	NegRisk bool
-}
-
-// OrderV2 表示 Polymarket V2 订单的签名前结构。
-type OrderV2 struct {
-	Version       CLOBVersion   `json:"-"`
-	Salt          string        `json:"salt"`
-	Maker         string        `json:"maker"`
-	Signer        string        `json:"signer"`
-	Taker         string        `json:"taker,omitempty"`
-	TokenID       string        `json:"tokenId"`
-	MakerAmount   string        `json:"makerAmount"`
-	TakerAmount   string        `json:"takerAmount"`
-	Side          Side          `json:"side"`
-	SignatureType SignatureType `json:"signatureType"`
-	Timestamp     string        `json:"timestamp"`
-	Expiration    string        `json:"expiration"`
-	Nonce         string        `json:"nonce,omitempty"`
-	FeeRateBps    string        `json:"feeRateBps,omitempty"`
-	Metadata      string        `json:"metadata"`
-	Builder       string        `json:"builder"`
-}
-
-// SignedOrderV2 表示带 EIP-712 签名的 V2 订单。
-type SignedOrderV2 struct {
-	OrderV2
-	Signature string `json:"signature"`
-}
-
-// SignedOrderV2Payload 是官方 SDK orderToJsonV2 输出中的 order 子对象形状。
-type SignedOrderV2Payload struct {
-	Salt          int64         `json:"salt"`
-	Maker         string        `json:"maker"`
-	Signer        string        `json:"signer"`
-	Taker         string        `json:"taker,omitempty"`
-	TokenID       string        `json:"tokenId"`
-	MakerAmount   string        `json:"makerAmount"`
-	TakerAmount   string        `json:"takerAmount"`
-	Side          Side          `json:"side"`
-	SignatureType SignatureType `json:"signatureType"`
-	Timestamp     string        `json:"timestamp,omitempty"`
-	Expiration    string        `json:"expiration"`
-	Nonce         string        `json:"nonce,omitempty"`
-	FeeRateBps    string        `json:"feeRateBps,omitempty"`
-	Metadata      string        `json:"metadata,omitempty"`
-	Builder       string        `json:"builder,omitempty"`
-	Signature     string        `json:"signature"`
-}
-
 // CreateOrder 按官方 SDK V2 规则构造并签名一笔限价单。
 func (c *Client) CreateOrder(ctx context.Context, params CreateOrderParams) (*SignedOrderV2, error) {
-	order, err := c.buildOrderV2(params)
+	order, err := c.buildOrderV2(ctx, params)
 	if err != nil {
 		return nil, err
 	}
-	return c.SignOrderV2(ctx, order, SignOrderV2Options{Version: order.Version, NegRisk: params.NegRisk})
+	return c.SignOrderV2(ctx, order, SignOrderV2Options{NegRisk: params.NegRisk})
 }
 
 // CreateMarketOrder 按官方 SDK V2 规则构造并签名一笔 market order。
@@ -242,72 +164,7 @@ func (c *Client) CreateMarketOrder(ctx context.Context, params CreateMarketOrder
 	if err != nil {
 		return nil, err
 	}
-	return c.SignOrderV2(ctx, order, SignOrderV2Options{Version: order.Version, NegRisk: params.NegRisk})
-}
-
-// SignOrderV2 对已有 V2 订单生成 EIP-712 签名。
-func (c *Client) SignOrderV2(ctx context.Context, order OrderV2, options SignOrderV2Options) (*SignedOrderV2, error) {
-	if c.signer == nil {
-		return nil, errors.New("l1 signer is not configured")
-	}
-
-	signerAddress := strings.TrimSpace(c.signer.Address())
-	if strings.TrimSpace(order.Signer) == "" {
-		order.Signer = signerAddress
-	}
-	if !strings.EqualFold(order.Signer, signerAddress) {
-		return nil, errors.New("order signer does not match configured signer")
-	}
-
-	version, err := c.resolveOrderVersion(options.Version)
-	if err != nil {
-		return nil, err
-	}
-	if order.Version != "" {
-		version, err = normalizeCLOBVersion(order.Version)
-		if err != nil {
-			return nil, err
-		}
-	}
-	order.Version = version
-
-	exchangeAddress := strings.TrimSpace(options.ExchangeAddress)
-	if exchangeAddress == "" {
-		exchangeAddress, err = exchangeAddressForVersion(version, c.chainID, options.NegRisk)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if !common.IsHexAddress(exchangeAddress) {
-		return nil, fmt.Errorf("invalid exchange address %q", exchangeAddress)
-	}
-
-	if err := validateOrderForVersion(order, version); err != nil {
-		return nil, err
-	}
-
-	var typedData apitypes.TypedData
-	switch version {
-	case CLOBVersionV1:
-		typedData, err = BuildOrderV1TypedData(order, c.chainID, exchangeAddress)
-	case CLOBVersionV2:
-		typedData, err = BuildOrderV2TypedData(order, c.chainID, exchangeAddress)
-	default:
-		err = fmt.Errorf("unsupported CLOB version %q", version)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	signature, err := c.signer.SignTypedData(ctx, typedData)
-	if err != nil {
-		return nil, err
-	}
-
-	return &SignedOrderV2{
-		OrderV2:   order,
-		Signature: signature,
-	}, nil
+	return c.SignOrderV2(ctx, order, SignOrderV2Options{NegRisk: params.NegRisk})
 }
 
 // CreatePostOrderRequest 构造可直接传给 PostOrder 的 V2 下单请求。
@@ -408,209 +265,7 @@ func (c *Client) CreateAndPostMarketOrder(ctx context.Context, params CreatePost
 	return c.PostOrder(ctx, *request)
 }
 
-// Payload 返回和官方 SDK orderToJsonV2 一致的 order payload。
-func (o SignedOrderV2) Payload() (*SignedOrderV2Payload, error) {
-	version, err := normalizeCLOBVersion(o.Version)
-	if err != nil {
-		return nil, err
-	}
-
-	salt, err := strconv.ParseInt(strings.TrimSpace(o.Salt), 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("parse order salt: %w", err)
-	}
-	if salt < 0 {
-		return nil, errors.New("order salt must be non-negative")
-	}
-
-	payload := &SignedOrderV2Payload{
-		Salt:          salt,
-		Maker:         o.Maker,
-		Signer:        o.Signer,
-		TokenID:       o.TokenID,
-		MakerAmount:   o.MakerAmount,
-		TakerAmount:   o.TakerAmount,
-		Side:          o.Side,
-		SignatureType: o.SignatureType,
-		Timestamp:     o.Timestamp,
-		Expiration:    o.Expiration,
-		Metadata:      o.Metadata,
-		Builder:       o.Builder,
-		Signature:     o.Signature,
-	}
-	if version == CLOBVersionV1 {
-		payload.Taker = o.Taker
-		payload.Timestamp = ""
-		payload.Metadata = ""
-		payload.Builder = ""
-		payload.Nonce = o.Nonce
-		payload.FeeRateBps = o.FeeRateBps
-	}
-	return payload, nil
-}
-
-// BuildOrderV1TypedData 构造 Polymarket V1 订单签名所需的 EIP-712 typed data。
-func BuildOrderV1TypedData(order OrderV2, chainID int64, exchangeAddress string) (apitypes.TypedData, error) {
-	salt, err := parseUint256(order.Salt, "salt")
-	if err != nil {
-		return apitypes.TypedData{}, err
-	}
-	tokenID, err := parseUint256(order.TokenID, "tokenID")
-	if err != nil {
-		return apitypes.TypedData{}, err
-	}
-	makerAmount, err := parseUint256(order.MakerAmount, "makerAmount")
-	if err != nil {
-		return apitypes.TypedData{}, err
-	}
-	takerAmount, err := parseUint256(order.TakerAmount, "takerAmount")
-	if err != nil {
-		return apitypes.TypedData{}, err
-	}
-	expiration, err := parseUint256(order.Expiration, "expiration")
-	if err != nil {
-		return apitypes.TypedData{}, err
-	}
-	nonce, err := parseUint256(order.Nonce, "nonce")
-	if err != nil {
-		return apitypes.TypedData{}, err
-	}
-	feeRateBps, err := parseUint256(order.FeeRateBps, "feeRateBps")
-	if err != nil {
-		return apitypes.TypedData{}, err
-	}
-
-	side, err := sideUint8(order.Side)
-	if err != nil {
-		return apitypes.TypedData{}, err
-	}
-
-	return apitypes.TypedData{
-		Types: apitypes.Types{
-			"EIP712Domain": {
-				{Name: "name", Type: "string"},
-				{Name: "version", Type: "string"},
-				{Name: "chainId", Type: "uint256"},
-				{Name: "verifyingContract", Type: "address"},
-			},
-			"Order": {
-				{Name: "salt", Type: "uint256"},
-				{Name: "maker", Type: "address"},
-				{Name: "signer", Type: "address"},
-				{Name: "taker", Type: "address"},
-				{Name: "tokenId", Type: "uint256"},
-				{Name: "makerAmount", Type: "uint256"},
-				{Name: "takerAmount", Type: "uint256"},
-				{Name: "expiration", Type: "uint256"},
-				{Name: "nonce", Type: "uint256"},
-				{Name: "feeRateBps", Type: "uint256"},
-				{Name: "side", Type: "uint8"},
-				{Name: "signatureType", Type: "uint8"},
-			},
-		},
-		PrimaryType: "Order",
-		Domain: apitypes.TypedDataDomain{
-			Name:              ctfExchangeDomainName,
-			Version:           ctfExchangeV1DomainVersion,
-			ChainId:           gethmath.NewHexOrDecimal256(chainID),
-			VerifyingContract: exchangeAddress,
-		},
-		Message: apitypes.TypedDataMessage{
-			"salt":          salt,
-			"maker":         order.Maker,
-			"signer":        order.Signer,
-			"taker":         order.Taker,
-			"tokenId":       tokenID,
-			"makerAmount":   makerAmount,
-			"takerAmount":   takerAmount,
-			"expiration":    expiration,
-			"nonce":         nonce,
-			"feeRateBps":    feeRateBps,
-			"side":          big.NewInt(side),
-			"signatureType": big.NewInt(int64(order.SignatureType)),
-		},
-	}, nil
-}
-
-// BuildOrderV2TypedData 构造 Polymarket V2 订单签名所需的 EIP-712 typed data。
-func BuildOrderV2TypedData(order OrderV2, chainID int64, exchangeAddress string) (apitypes.TypedData, error) {
-	salt, err := parseUint256(order.Salt, "salt")
-	if err != nil {
-		return apitypes.TypedData{}, err
-	}
-	tokenID, err := parseUint256(order.TokenID, "tokenID")
-	if err != nil {
-		return apitypes.TypedData{}, err
-	}
-	makerAmount, err := parseUint256(order.MakerAmount, "makerAmount")
-	if err != nil {
-		return apitypes.TypedData{}, err
-	}
-	takerAmount, err := parseUint256(order.TakerAmount, "takerAmount")
-	if err != nil {
-		return apitypes.TypedData{}, err
-	}
-	timestamp, err := parseUint256(order.Timestamp, "timestamp")
-	if err != nil {
-		return apitypes.TypedData{}, err
-	}
-
-	side, err := sideUint8(order.Side)
-	if err != nil {
-		return apitypes.TypedData{}, err
-	}
-
-	return apitypes.TypedData{
-		Types: apitypes.Types{
-			"EIP712Domain": {
-				{Name: "name", Type: "string"},
-				{Name: "version", Type: "string"},
-				{Name: "chainId", Type: "uint256"},
-				{Name: "verifyingContract", Type: "address"},
-			},
-			"Order": {
-				{Name: "salt", Type: "uint256"},
-				{Name: "maker", Type: "address"},
-				{Name: "signer", Type: "address"},
-				{Name: "tokenId", Type: "uint256"},
-				{Name: "makerAmount", Type: "uint256"},
-				{Name: "takerAmount", Type: "uint256"},
-				{Name: "side", Type: "uint8"},
-				{Name: "signatureType", Type: "uint8"},
-				{Name: "timestamp", Type: "uint256"},
-				{Name: "metadata", Type: "bytes32"},
-				{Name: "builder", Type: "bytes32"},
-			},
-		},
-		PrimaryType: "Order",
-		Domain: apitypes.TypedDataDomain{
-			Name:              ctfExchangeDomainName,
-			Version:           ctfExchangeV2DomainVersion,
-			ChainId:           gethmath.NewHexOrDecimal256(chainID),
-			VerifyingContract: exchangeAddress,
-		},
-		Message: apitypes.TypedDataMessage{
-			"salt":          salt,
-			"maker":         order.Maker,
-			"signer":        order.Signer,
-			"tokenId":       tokenID,
-			"makerAmount":   makerAmount,
-			"takerAmount":   takerAmount,
-			"side":          big.NewInt(side),
-			"signatureType": big.NewInt(int64(order.SignatureType)),
-			"timestamp":     timestamp,
-			"metadata":      order.Metadata,
-			"builder":       order.Builder,
-		},
-	}, nil
-}
-
-func (c *Client) buildOrderV2(params CreateOrderParams) (OrderV2, error) {
-	version, err := c.resolveOrderVersion(params.Version)
-	if err != nil {
-		return OrderV2{}, err
-	}
-
+func (c *Client) buildOrderV2(ctx context.Context, params CreateOrderParams) (OrderV2, error) {
 	roundConfig, err := roundingConfigForTick(params.TickSize)
 	if err != nil {
 		return OrderV2{}, err
@@ -621,28 +276,20 @@ func (c *Client) buildOrderV2(params CreateOrderParams) (OrderV2, error) {
 		return OrderV2{}, err
 	}
 
-	return c.buildOrderV2FromAmounts(orderV2CommonParams{
-		Version:     version,
+	return c.buildOrderV2FromAmounts(ctx, orderV2CommonParams{
 		Maker:       params.Maker,
-		Taker:       params.Taker,
 		TokenID:     params.TokenID,
 		Side:        side,
 		Metadata:    params.Metadata,
 		Builder:     params.Builder,
+		BuilderCode: params.BuilderCode,
 		Expiration:  params.Expiration,
-		Nonce:       params.Nonce,
-		FeeRateBps:  params.FeeRateBps,
 		TimestampMS: params.TimestampMS,
 		Salt:        params.Salt,
 	}, makerAmount, takerAmount)
 }
 
 func (c *Client) buildMarketOrderV2(ctx context.Context, params CreateMarketOrderParams) (OrderV2, error) {
-	version, err := c.resolveOrderVersion(params.Version)
-	if err != nil {
-		return OrderV2{}, err
-	}
-
 	roundConfig, err := roundingConfigForTick(params.TickSize)
 	if err != nil {
 		return OrderV2{}, err
@@ -662,26 +309,24 @@ func (c *Client) buildMarketOrderV2(ctx context.Context, params CreateMarketOrde
 		price = string(calculatedPrice)
 	}
 
-	priceRoundMode := roundModeNormal
-	if version == CLOBVersionV2 {
-		priceRoundMode = roundModeDown
-	}
-	side, makerAmount, takerAmount, err := buildMarketOrderAmounts(params.Side, params.Amount, price, roundConfig, priceRoundMode)
+	amount, err := c.adjustMarketBuyAmountForFees(ctx, params, price)
 	if err != nil {
 		return OrderV2{}, err
 	}
 
-	return c.buildOrderV2FromAmounts(orderV2CommonParams{
-		Version:     version,
+	side, makerAmount, takerAmount, err := buildMarketOrderAmounts(params.Side, amount, price, roundConfig, roundModeDown)
+	if err != nil {
+		return OrderV2{}, err
+	}
+
+	return c.buildOrderV2FromAmounts(ctx, orderV2CommonParams{
 		Maker:       params.Maker,
-		Taker:       params.Taker,
 		TokenID:     params.TokenID,
 		Side:        side,
 		Metadata:    params.Metadata,
 		Builder:     params.Builder,
+		BuilderCode: params.BuilderCode,
 		Expiration:  params.Expiration,
-		Nonce:       params.Nonce,
-		FeeRateBps:  params.FeeRateBps,
 		TimestampMS: params.TimestampMS,
 		Salt:        params.Salt,
 	}, makerAmount, takerAmount)
@@ -715,28 +360,20 @@ func (c *Client) CalculateMarketOrderPrice(ctx context.Context, params MarketOrd
 }
 
 type orderV2CommonParams struct {
-	Version     CLOBVersion
 	Maker       string
-	Taker       string
 	TokenID     string
 	Side        Side
 	Metadata    string
 	Builder     string
+	BuilderCode string
 	Expiration  int64
-	Nonce       int64
-	FeeRateBps  int64
 	TimestampMS int64
 	Salt        string
 }
 
-func (c *Client) buildOrderV2FromAmounts(params orderV2CommonParams, makerAmount string, takerAmount string) (OrderV2, error) {
+func (c *Client) buildOrderV2FromAmounts(ctx context.Context, params orderV2CommonParams, makerAmount string, takerAmount string) (OrderV2, error) {
 	if c.signer == nil {
 		return OrderV2{}, errors.New("l1 signer is not configured")
-	}
-
-	version, err := c.resolveOrderVersion(params.Version)
-	if err != nil {
-		return OrderV2{}, err
 	}
 
 	if _, err := parseUint256(params.TokenID, "tokenID"); err != nil {
@@ -749,45 +386,22 @@ func (c *Client) buildOrderV2FromAmounts(params orderV2CommonParams, makerAmount
 		return OrderV2{}, err
 	}
 
-	maker := strings.TrimSpace(params.Maker)
-	if maker == "" {
-		maker = c.funderAddress
-	}
-	if maker == "" && c.signatureType != SignatureTypeEOA {
-		return OrderV2{}, errors.New("funder address is required when signature type is not EOA")
-	}
-	if maker == "" {
-		maker = c.signer.Address()
-	}
-	if !common.IsHexAddress(maker) {
-		return OrderV2{}, fmt.Errorf("invalid maker address %q", maker)
-	}
-
-	taker := strings.TrimSpace(params.Taker)
-	if taker == "" {
-		taker = ZeroAddress
-	}
-	if !common.IsHexAddress(taker) {
-		return OrderV2{}, fmt.Errorf("invalid taker address %q", taker)
+	maker, err := c.resolveOrderMaker(ctx, params.Maker, params.TokenID)
+	if err != nil {
+		return OrderV2{}, err
 	}
 
 	metadata, err := normalizeBytes32(params.Metadata, "metadata")
 	if err != nil {
 		return OrderV2{}, err
 	}
-	builder, err := normalizeBytes32(params.Builder, "builder")
+	builder, err := c.resolveOrderBuilder(params.Builder, params.BuilderCode)
 	if err != nil {
 		return OrderV2{}, err
 	}
 
 	if params.Expiration < 0 {
 		return OrderV2{}, errors.New("expiration must be non-negative")
-	}
-	if params.Nonce < 0 {
-		return OrderV2{}, errors.New("nonce must be non-negative")
-	}
-	if params.FeeRateBps < 0 {
-		return OrderV2{}, errors.New("feeRateBps must be non-negative")
 	}
 	if params.TimestampMS < 0 {
 		return OrderV2{}, errors.New("timestampMS must be non-negative")
@@ -811,11 +425,9 @@ func (c *Client) buildOrderV2FromAmounts(params orderV2CommonParams, makerAmount
 	}
 
 	return OrderV2{
-		Version:       version,
 		Salt:          salt,
 		Maker:         common.HexToAddress(maker).Hex(),
 		Signer:        common.HexToAddress(c.signer.Address()).Hex(),
-		Taker:         common.HexToAddress(taker).Hex(),
 		TokenID:       strings.TrimSpace(params.TokenID),
 		MakerAmount:   makerAmount,
 		TakerAmount:   takerAmount,
@@ -823,152 +435,163 @@ func (c *Client) buildOrderV2FromAmounts(params orderV2CommonParams, makerAmount
 		SignatureType: c.signatureType,
 		Timestamp:     strconv.FormatInt(timestamp, 10),
 		Expiration:    strconv.FormatInt(params.Expiration, 10),
-		Nonce:         strconv.FormatInt(params.Nonce, 10),
-		FeeRateBps:    strconv.FormatInt(params.FeeRateBps, 10),
 		Metadata:      metadata,
 		Builder:       builder,
 	}, nil
 }
 
-func validateOrderV2(order OrderV2) error {
-	if _, err := parseUint256(order.Salt, "salt"); err != nil {
-		return err
+func (c *Client) resolveOrderMaker(ctx context.Context, requestedMaker string, tokenID string) (string, error) {
+	maker := strings.TrimSpace(requestedMaker)
+	if maker == "" {
+		maker = c.funderAddress
 	}
-	if !common.IsHexAddress(order.Maker) {
-		return fmt.Errorf("invalid maker address %q", order.Maker)
-	}
-	if !common.IsHexAddress(order.Signer) {
-		return fmt.Errorf("invalid signer address %q", order.Signer)
-	}
-	if _, err := parseUint256(order.TokenID, "tokenID"); err != nil {
-		return err
-	}
-	if _, err := parseUint256(order.MakerAmount, "makerAmount"); err != nil {
-		return err
-	}
-	if _, err := parseUint256(order.TakerAmount, "takerAmount"); err != nil {
-		return err
-	}
-	if _, err := sideUint8(order.Side); err != nil {
-		return err
-	}
-	if order.SignatureType < SignatureTypeEOA || order.SignatureType > SignatureTypePoly1271 {
-		return fmt.Errorf("invalid signature type %d", order.SignatureType)
-	}
-	if _, err := parseUint256(order.Timestamp, "timestamp"); err != nil {
-		return err
-	}
-	if _, err := parseUint256(order.Expiration, "expiration"); err != nil {
-		return err
-	}
-	if _, err := normalizeBytes32(order.Metadata, "metadata"); err != nil {
-		return err
-	}
-	if _, err := normalizeBytes32(order.Builder, "builder"); err != nil {
-		return err
-	}
-	return nil
-}
-
-func validateOrderV1(order OrderV2) error {
-	if _, err := parseUint256(order.Salt, "salt"); err != nil {
-		return err
-	}
-	if !common.IsHexAddress(order.Maker) {
-		return fmt.Errorf("invalid maker address %q", order.Maker)
-	}
-	if !common.IsHexAddress(order.Signer) {
-		return fmt.Errorf("invalid signer address %q", order.Signer)
-	}
-	if !common.IsHexAddress(order.Taker) {
-		return fmt.Errorf("invalid taker address %q", order.Taker)
-	}
-	if _, err := parseUint256(order.TokenID, "tokenID"); err != nil {
-		return err
-	}
-	if _, err := parseUint256(order.MakerAmount, "makerAmount"); err != nil {
-		return err
-	}
-	if _, err := parseUint256(order.TakerAmount, "takerAmount"); err != nil {
-		return err
-	}
-	if _, err := sideUint8(order.Side); err != nil {
-		return err
-	}
-	if order.SignatureType < SignatureTypeEOA || order.SignatureType > SignatureTypePoly1271 {
-		return fmt.Errorf("invalid signature type %d", order.SignatureType)
-	}
-	if _, err := parseUint256(order.Expiration, "expiration"); err != nil {
-		return err
-	}
-	if _, err := parseUint256(order.Nonce, "nonce"); err != nil {
-		return err
-	}
-	if _, err := parseUint256(order.FeeRateBps, "feeRateBps"); err != nil {
-		return err
-	}
-	return nil
-}
-
-func validateOrderForVersion(order OrderV2, version CLOBVersion) error {
-	switch version {
-	case CLOBVersionV1:
-		return validateOrderV1(order)
-	case CLOBVersionV2:
-		return validateOrderV2(order)
-	default:
-		return fmt.Errorf("unsupported CLOB version %q", version)
-	}
-}
-
-func (c *Client) resolveOrderVersion(version CLOBVersion) (CLOBVersion, error) {
-	if version != "" {
-		return normalizeCLOBVersion(version)
-	}
-	if c == nil || c.clobVersion == "" {
-		return CLOBVersionV2, nil
-	}
-	return normalizeCLOBVersion(c.clobVersion)
-}
-
-func exchangeV2Address(chainID int64, negRisk bool) (string, error) {
-	switch chainID {
-	case 137:
-		if negRisk {
-			return polygonNegRiskExchangeV2, nil
+	if maker == "" && c.signatureType != SignatureTypeEOA && c.autoDiscoverFunder {
+		discovery, err := c.DiscoverFunder(ctx, FunderDiscoveryParams{
+			AssetID: strings.TrimSpace(tokenID),
+		})
+		if err != nil {
+			return "", fmt.Errorf("auto-discover funder: %w", err)
 		}
-		return polygonExchangeV2, nil
-	case 80002:
-		if negRisk {
-			return amoyNegRiskExchangeV2, nil
+		if discovery.Preferred != nil {
+			maker = discovery.Preferred.Address
+		} else {
+			subject := funderDiscoverySubject(discovery)
+			if len(discovery.Candidates) == 0 {
+				return "", fmt.Errorf("funder address is required when signature type is not EOA; auto-discovery found no candidates for %s", subject)
+			}
+			return "", fmt.Errorf("funder address is required when signature type is not EOA; auto-discovery found %d candidates for %s", len(discovery.Candidates), subject)
 		}
-		return amoyExchangeV2, nil
-	default:
-		return "", fmt.Errorf("unsupported chain ID %d", chainID)
 	}
+	if maker == "" && c.signatureType != SignatureTypeEOA {
+		return "", errors.New("funder address is required when signature type is not EOA")
+	}
+	if maker == "" {
+		maker = c.signer.Address()
+	}
+	if !common.IsHexAddress(maker) {
+		return "", fmt.Errorf("invalid maker address %q", maker)
+	}
+	return common.HexToAddress(maker).Hex(), nil
 }
 
-func exchangeV1Address(chainID int64, negRisk bool) (string, error) {
-	switch chainID {
-	case 137:
-		if negRisk {
-			return polygonNegRiskExchangeV1, nil
+func (c *Client) resolveOrderBuilder(builder string, builderCode string) (string, error) {
+	builder = strings.TrimSpace(builder)
+	builderCode = strings.TrimSpace(builderCode)
+
+	var normalizedBuilder string
+	if builder != "" {
+		var err error
+		normalizedBuilder, err = normalizeBytes32(builder, "builder")
+		if err != nil {
+			return "", err
 		}
-		return polygonExchangeV1, nil
-	default:
-		return "", fmt.Errorf("unsupported V1 chain ID %d", chainID)
 	}
+
+	var normalizedCode string
+	if builderCode != "" {
+		var err error
+		normalizedCode, err = normalizeBuilderCode(builderCode)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	if normalizedBuilder != "" && normalizedCode != "" && !strings.EqualFold(normalizedBuilder, normalizedCode) {
+		return "", errors.New("builder and builderCode must match when both are provided")
+	}
+	if normalizedCode != "" {
+		return normalizedCode, nil
+	}
+	if normalizedBuilder != "" {
+		return normalizedBuilder, nil
+	}
+	if c != nil && c.builderCode != "" {
+		return c.builderCode, nil
+	}
+	return ZeroBytes32, nil
 }
 
-func exchangeAddressForVersion(version CLOBVersion, chainID int64, negRisk bool) (string, error) {
-	switch version {
-	case CLOBVersionV1:
-		return exchangeV1Address(chainID, negRisk)
-	case CLOBVersionV2:
-		return exchangeV2Address(chainID, negRisk)
-	default:
-		return "", fmt.Errorf("unsupported CLOB version %q", version)
+func (c *Client) adjustMarketBuyAmountForFees(ctx context.Context, params CreateMarketOrderParams, price string) (string, error) {
+	amount := strings.TrimSpace(params.Amount)
+	if strings.TrimSpace(params.UserUSDCBalance) == "" {
+		return amount, nil
 	}
+
+	side, err := normalizeSide(params.Side)
+	if err != nil {
+		return "", err
+	}
+	if side != SideBuy {
+		return amount, nil
+	}
+
+	builder, err := c.resolveOrderBuilder(params.Builder, params.BuilderCode)
+	if err != nil {
+		return "", err
+	}
+
+	feeInfo, err := c.resolveMarketFeeInfo(ctx, params.TokenID, params.FeeInfo)
+	if err != nil {
+		return "", err
+	}
+
+	builderTakerFeeBps, err := c.resolveBuilderTakerFeeBps(ctx, builder, params.BuilderTakerFeeBps)
+	if err != nil {
+		return "", err
+	}
+
+	return adjustBuyAmountForFees(amount, price, params.UserUSDCBalance, feeInfo, builderTakerFeeBps)
+}
+
+func (c *Client) resolveMarketFeeInfo(ctx context.Context, tokenID string, explicit *MarketFeeInfo) (MarketFeeInfo, error) {
+	if explicit != nil {
+		return explicit.normalized()
+	}
+
+	tokenID = strings.TrimSpace(tokenID)
+	if tokenID == "" {
+		return MarketFeeInfo{}, errors.New("tokenID is required")
+	}
+
+	book, err := c.GetOrderBook(ctx, tokenID)
+	if err != nil {
+		return MarketFeeInfo{}, fmt.Errorf("load order book for fee info: %w", err)
+	}
+	conditionID := strings.TrimSpace(book.Market)
+	if conditionID == "" {
+		market, err := c.GetMarketByToken(ctx, tokenID)
+		if err != nil {
+			return MarketFeeInfo{}, fmt.Errorf("resolve market for fee info: %w", err)
+		}
+		conditionID = strings.TrimSpace(market.ConditionID)
+	}
+	if conditionID == "" {
+		return MarketFeeInfo{}, errors.New("market conditionID is required to resolve fee info")
+	}
+
+	marketInfo, err := c.GetCLOBMarketInfo(ctx, conditionID)
+	if err != nil {
+		return MarketFeeInfo{}, fmt.Errorf("load market fee info: %w", err)
+	}
+	return marketInfo.FeeDetails.marketFeeInfo().normalized()
+}
+
+func (c *Client) resolveBuilderTakerFeeBps(ctx context.Context, builder string, explicit *int64) (int64, error) {
+	if explicit != nil {
+		if *explicit < 0 {
+			return 0, errors.New("builder taker fee bps must be non-negative")
+		}
+		return *explicit, nil
+	}
+	if !isBuilderOrder(builder) {
+		return 0, nil
+	}
+
+	rates, err := c.GetBuilderFeeRates(ctx, builder)
+	if err != nil {
+		return 0, fmt.Errorf("load builder fee rates: %w", err)
+	}
+	return rates.TakerFeeRateBps, nil
 }
 
 func roundingConfigForTick(tickSize TickSize) (orderRoundConfig, error) {
@@ -1121,6 +744,58 @@ func calculateMarketPriceFromLevels(levels []BookLevel, side Side, amount string
 	}
 
 	return NumberString(strings.TrimSpace(string(levels[0].Price))), nil
+}
+
+func adjustBuyAmountForFees(amount string, price string, userUSDCBalance string, feeInfo MarketFeeInfo, builderTakerFeeBps int64) (string, error) {
+	amountRat, err := parsePositiveDecimal(amount, "amount")
+	if err != nil {
+		return "", err
+	}
+	priceRat, err := parsePositiveDecimal(price, "price")
+	if err != nil {
+		return "", err
+	}
+	balanceRat, err := parsePositiveDecimal(userUSDCBalance, "userUSDCBalance")
+	if err != nil {
+		return "", err
+	}
+
+	feeInfo, err = feeInfo.normalized()
+	if err != nil {
+		return "", err
+	}
+	feeRate, err := parseNonNegativeDecimal(feeInfo.Rate, "fee rate")
+	if err != nil {
+		return "", err
+	}
+	builderRate, err := builderFeeRateFromBps(builderTakerFeeBps)
+	if err != nil {
+		return "", err
+	}
+
+	oneMinusPrice := new(big.Rat).Sub(big.NewRat(1, 1), priceRat)
+	if oneMinusPrice.Sign() < 0 {
+		return "", errors.New("price must be less than or equal to 1 when adjusting buy amount for fees")
+	}
+
+	platformFeeBase := new(big.Rat).Mul(priceRat, oneMinusPrice)
+	platformFeeRate := new(big.Rat).Mul(feeRate, powRat(platformFeeBase, feeInfo.Exponent))
+	platformFee := new(big.Rat).Mul(new(big.Rat).Quo(amountRat, priceRat), platformFeeRate)
+	builderFee := new(big.Rat).Mul(amountRat, builderRate)
+	totalCost := new(big.Rat).Add(amountRat, platformFee)
+	totalCost.Add(totalCost, builderFee)
+
+	if balanceRat.Cmp(totalCost) > 0 {
+		return strings.TrimSpace(amount), nil
+	}
+
+	denominator := new(big.Rat).Add(big.NewRat(1, 1), new(big.Rat).Quo(platformFeeRate, priceRat))
+	denominator.Add(denominator, builderRate)
+	adjusted := new(big.Rat).Quo(balanceRat, denominator)
+	if adjusted.Sign() <= 0 {
+		return "", errors.New("adjusted buy amount is not positive")
+	}
+	return ratToDecimalString(adjusted), nil
 }
 
 func decimalIsNonPositive(value string) bool {
@@ -1276,6 +951,22 @@ func parsePositiveDecimal(value string, fieldName string) (*big.Rat, error) {
 	return parsed, nil
 }
 
+func parseNonNegativeDecimal(value string, fieldName string) (*big.Rat, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, fmt.Errorf("%s is required", fieldName)
+	}
+
+	parsed, ok := new(big.Rat).SetString(value)
+	if !ok {
+		return nil, fmt.Errorf("invalid %s %q", fieldName, value)
+	}
+	if parsed.Sign() < 0 {
+		return nil, fmt.Errorf("%s must be non-negative", fieldName)
+	}
+	return parsed, nil
+}
+
 func parseUint256(value string, fieldName string) (*big.Int, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -1331,6 +1022,18 @@ func generateOrderSalt() (string, error) {
 		return "", fmt.Errorf("generate order salt: %w", err)
 	}
 	return value.String(), nil
+}
+
+func powRat(value *big.Rat, exponent int64) *big.Rat {
+	if exponent <= 0 {
+		return big.NewRat(1, 1)
+	}
+
+	result := big.NewRat(1, 1)
+	for i := int64(0); i < exponent; i++ {
+		result.Mul(result, value)
+	}
+	return result
 }
 
 func tenPow(decimals int) *big.Int {

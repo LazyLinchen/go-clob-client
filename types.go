@@ -157,6 +157,38 @@ type TickSizeResponse struct {
 	MinimumTickSize NumberString `json:"minimum_tick_size"`
 }
 
+// NegRiskResponse 表示 neg-risk 查询接口响应。
+type NegRiskResponse struct {
+	NegRisk bool `json:"neg_risk"`
+}
+
+// MarketByTokenResponse 表示按 token 查询市场元数据的最小响应。
+type MarketByTokenResponse struct {
+	ConditionID string `json:"condition_id"`
+}
+
+// UnmarshalJSON 兼容 condition_id、conditionId 和 market 三种常见字段名。
+func (r *MarketByTokenResponse) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		ConditionID      string `json:"condition_id"`
+		ConditionIDCamel string `json:"conditionId"`
+		Market           string `json:"market"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+
+	switch {
+	case wire.ConditionID != "":
+		r.ConditionID = wire.ConditionID
+	case wire.ConditionIDCamel != "":
+		r.ConditionID = wire.ConditionIDCamel
+	default:
+		r.ConditionID = wire.Market
+	}
+	return nil
+}
+
 // UnmarshalJSON 兼容 minimum_tick_size、tick_size 以及纯标量格式。
 func (r *TickSizeResponse) UnmarshalJSON(data []byte) error {
 	if looksLikeScalarJSON(data) {

@@ -44,6 +44,9 @@ func extractErrorMessage(body string, fallback string) string {
 	if body == "" {
 		return fallback
 	}
+	if strings.HasPrefix(strings.TrimSpace(body), "<") {
+		return fallback
+	}
 
 	var stringBody string
 	if err := json.Unmarshal([]byte(body), &stringBody); err == nil {

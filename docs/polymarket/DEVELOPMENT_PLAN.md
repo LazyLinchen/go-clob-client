@@ -157,12 +157,9 @@
 - `expiration` 保留在 wire payload 中，但不参与 V2 typed-data 签名
 - V2 限价单不再把 `taker`、`nonce`、`feeRateBps` 放入签名结构
 - 普通 market 与 neg-risk market 通过不同 V2 exchange `verifyingContract` 区分
-- V1 与 V2 签名结构不兼容，必须通过 `CLOBVersion` 显式分支
-- V1 兼容分支保留 `taker`、`nonce`、`feeRateBps`，并使用旧版 exchange 合约
 
 已实现：
 
-- `CLOBVersionV1` / `CLOBVersionV2` 版本分流
 - `CreateOrder()`
 - `CreateMarketOrder()`
 - `CalculateMarketOrderPrice()`
@@ -171,15 +168,22 @@
 - `CreatePostMarketOrderRequest()`
 - `CreateAndPostOrder()`
 - `CreateAndPostMarketOrder()`
+- `DiscoverFunder()`
+- `WithDiscoveredFunder()`
+- `ClientConfig.BuilderCode`
+- `WithBuilderCode()`
+- `GetBuilderFeeRates()`
+- `UserUSDCBalance` fee-aware market BUY amount adjustment
 - 下单 `owner` 留空时默认使用 L2 API key
 - 客户端级 `FunderAddress` 配置，用于 proxy wallet / safe 资金地址
-- 非 EOA `signatureType` 缺少 funder 时本地直接报错，避免服务端 `invalid signature`
+- 客户端级 `BuilderCode` 配置，用于默认把 V2 订单标记为 builder order
+- 非 EOA `signatureType` 缺少 funder 时，客户端可通过 `AutoDiscoverFunder` 先尝试自动推导；仍无法唯一确定时本地直接报错，避免服务端 `invalid signature`
+- funder 自动发现会返回候选与推荐值；无候选或多候选时仍要求调用方显式决定
+- market BUY 在提供 `UserUSDCBalance` 时，会按官方 SDK 公式把 platform fee 和 builder taker fee 纳入余额保护
 
 后续仍需补齐：
 
-- proxy wallet / safe funder 自动发现
-- builder code / builder fee 高级封装
-- 真实 `PostOrder` live 集成测试实盘验证
+- 真实资金/授权下的 `CreateAndPostOrder -> CancelOrder` live 闭环结果
 
 ## 4. 建议目录结构
 
@@ -323,28 +327,55 @@ internal/httputil/
 订单签名第一版已按官方 SDK 源码完成。当前仍需确认下面几个问题：
 
 1. funder / proxy wallet 是否能从公开接口自动推导
-2. `builder` 字段何时必须携带非零值
-3. 真实 `PostOrder` 在不同 `signatureType` / funder 组合下的服务端行为
+2. 真实 `PostOrder` 在不同 `signatureType` / funder 组合下的服务端行为
+3. 真实余额/allowance 下 `CreateAndPostOrder -> CancelOrder` 的完整服务端闭环
 
 ## 10. 下一步建议
 
-截至 2026-04-23，本地代码已覆盖 `Phase 1` 到 `Phase 5`，并完成 `Phase 6` 的 V2 限价单与 market order 第一版：
+截至 2026-04-25，本地代码已覆盖 `Phase 1` 到 `Phase 5`，并完成 `Phase 6` 的 V2 自动构造、签名和提交第一版：
 
 - `Phase 1`: 核心 HTTP client
 - `Phase 2`: Public methods
 - `Phase 3`: L1 auth / API key
 - `Phase 4`: L2 headers、余额查询、订单查询/撤单、全撤、按市场撤单、heartbeat、order scoring
 - `Phase 5`: `PostOrder` / `PostOrders` 已支持“提交外部已签名 payload”
-- `Phase 6`: `CreateOrder` / `CreateMarketOrder` / `SignOrderV2` / `CreateAndPostOrder` / `CreateAndPostMarketOrder` 已支持 V1/V2 版本分流、构造、签名和提交链路
-- 当前默认订单 schema 使用 V2；如需兼容旧服务端，显式设置 `CLOBVersionV1` 或 `POLYMARKET_CLOB_VERSION=v1`
+- `Phase 6`: `CreateOrder` / `CreateMarketOrder` / `SignOrderV2` / `CreateAndPostOrder` / `CreateAndPostMarketOrder` 已收敛为 V2-only 构造、签名和提交链路
+- V1 订单签名、payload 和 host 分流已移除，避免继续维护即将淘汰的 schema 分支
 
+补充进展：
+
+- live integration 不再使用额外开关；当前通过 `go test -run ...` 精确选择要访问生产环境的测试。
+- `orders_integration_test.go` 已收敛为两个核心生产写入场景：
+  - `TestIntegrationCreatePostAndCancelOrder`
+  - `TestIntegrationCreatePostMarketBuyThenSellOrder`
+- 默认使用生产 host，并支持自动发现活跃 token / tick size / neg-risk / 默认下单参数；也可通过 `.env` 显式指定 token、amount、price 等参数。
+- funder 自动发现已落地：
+  - `DiscoverFunder()`
+  - `WithDiscoveredFunder()`
+  - `ClientConfig.AutoDiscoverFunder`
+  - `WithAutoDiscoverFunder()`
+- builder code / builder fee 封装已落地：
+  - `ClientConfig.BuilderCode`
+  - `WithBuilderCode()`
+  - `NormalizeBuilderCode()`
+  - `GetBuilderFeeRates()`
+  - `CreateOrderParams.BuilderCode`
+  - `CreateMarketOrderParams.BuilderCode`
+  - `CreateMarketOrderParams.UserUSDCBalance`
+  - `CreateMarketOrderParams.FeeInfo`
+  - `CreateMarketOrderParams.BuilderTakerFeeBps`
+- 最新 live 结论：
+  - `.env` 里原先的 `POLYMARKET_PROXY_URL=http://127.0.0.1` 缺少端口，会导致真实请求超时；当前本机验证通过的代理地址是 `http://127.0.0.1:7897`
+  - 修正代理后，`CreateOrDeriveAPIKey()` 已通过
+  - 对当前测试账户，在不显式设置 `FunderAddress` 时：
+    - `signatureType=0` 的 `DiscoverFunder()` 返回 signer 自身
+    - `signatureType=1` / `2` 均未发现 proxy wallet / safe 候选
+  - `CreateAndPostOrder -> CancelOrder` 已完成真实 GTC 挂单和撤单闭环。
+  - `CreateAndPostMarketOrder` 已完成真实 Market BUY，再用 BUY 响应 `TakingAmount` 作为 shares 执行 Market SELL。
 后续最合理的动作变为：
 
-1. 补 live 集成测试，优先覆盖：
-   - `GetUserOrders`
-   - `CancelOrder` / `CancelOrders`
-   - `CreateAndPostMarketOrder`（仅在测试账户和最小风险场景下）
-2. 补 proxy wallet / safe funder 自动发现，减少调用方手工传参
-3. 视需要增加 builder code / builder fee 相关封装
+1. 继续扩大 funder 自动发现的候选来源和命中率，减少调用方在 proxy / safe 场景下手工传参
+2. 补齐更多订单/账户接口的 live 验证，但保持生产写入测试数量受控
+3. 修正和验证 market order 价格计算、价格区间校验等边界逻辑
 
-这样可以继续扩大可用接口面，同时把真实下单风险控制在显式 opt-in 的 live 测试中。
+这样可以继续扩大可用接口面，同时保持真实下单测试范围清晰。

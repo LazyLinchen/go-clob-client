@@ -101,6 +101,35 @@ func (c *Client) GetTickSize(ctx context.Context, tokenID string) (*TickSizeResp
 	return &response, nil
 }
 
+// GetNegRisk 获取指定 token 是否属于 neg-risk 市场。
+func (c *Client) GetNegRisk(ctx context.Context, tokenID string) (*NegRiskResponse, error) {
+	tokenID = strings.TrimSpace(tokenID)
+	if tokenID == "" {
+		return nil, fmt.Errorf("tokenID is required")
+	}
+
+	var response NegRiskResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/neg-risk", url.Values{"token_id": []string{tokenID}}, nil, nil, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// GetMarketByToken 根据 token ID 查询其所属市场元数据。
+func (c *Client) GetMarketByToken(ctx context.Context, tokenID string) (*MarketByTokenResponse, error) {
+	tokenID = strings.TrimSpace(tokenID)
+	if tokenID == "" {
+		return nil, fmt.Errorf("tokenID is required")
+	}
+
+	var response MarketByTokenResponse
+	endpoint := "/markets-by-token/" + url.PathEscape(tokenID)
+	if err := c.doJSON(ctx, http.MethodGet, endpoint, nil, nil, nil, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
 // GetCLOBMarketInfo 获取指定条件市场的扩展市场信息。
 func (c *Client) GetCLOBMarketInfo(ctx context.Context, conditionID string) (*CLOBMarketInfo, error) {
 	conditionID = strings.TrimSpace(conditionID)
