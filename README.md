@@ -1,6 +1,14 @@
 # go-clob-client
 
+[![CI](https://github.com/LazyLinchen/go-clob-client/actions/workflows/ci.yml/badge.svg)](https://github.com/LazyLinchen/go-clob-client/actions/workflows/ci.yml)
+
 `go-clob-client` 是 Polymarket CLOB API 的 Go 客户端库，包名为 `clobclient`。
+
+## 安装
+
+```powershell
+go get github.com/LazyLinchen/go-clob-client
+```
 
 ## 基本用法
 
@@ -12,7 +20,7 @@ import (
 	"fmt"
 	"log"
 
-	clobclient "https://github.com/LazyLinchen/go-clob-client.git"
+	clobclient "github.com/LazyLinchen/go-clob-client"
 )
 
 func main() {
@@ -56,3 +64,15 @@ if err != nil {
 ```
 
 不要提交私钥、API Secret 或 `.env` 文件。
+
+## 测试
+
+本地确定性测试会排除 `TestIntegration...` live 测试：
+
+```powershell
+go test ./... -run '^Test[^I]' -count=1
+go build ./...
+```
+
+live 测试会访问真实 Polymarket 服务，部分订单测试可能真实成交。运行前请配置 `.env`，
+并只用精确的 `-run TestIntegration...` 目标执行。
