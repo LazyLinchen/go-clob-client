@@ -391,6 +391,13 @@ func (c *Client) buildOrderV2FromAmounts(ctx context.Context, params orderV2Comm
 		return OrderV2{}, err
 	}
 
+	// POLY_1271 订单的 maker 与 signer 都是 deposit wallet 合约地址；
+	// 其他签名类型保持 signer = EOA 的旧行为。
+	orderSigner := common.HexToAddress(c.signer.Address()).Hex()
+	if c.signatureType == SignatureTypePoly1271 {
+		orderSigner = common.HexToAddress(maker).Hex()
+	}
+
 	metadata, err := normalizeBytes32(params.Metadata, "metadata")
 	if err != nil {
 		return OrderV2{}, err
@@ -427,7 +434,7 @@ func (c *Client) buildOrderV2FromAmounts(ctx context.Context, params orderV2Comm
 	return OrderV2{
 		Salt:          salt,
 		Maker:         common.HexToAddress(maker).Hex(),
-		Signer:        common.HexToAddress(c.signer.Address()).Hex(),
+		Signer:        orderSigner,
 		TokenID:       strings.TrimSpace(params.TokenID),
 		MakerAmount:   makerAmount,
 		TakerAmount:   takerAmount,
@@ -444,6 +451,17 @@ func (c *Client) resolveOrderMaker(ctx context.Context, requestedMaker string, t
 	maker := strings.TrimSpace(requestedMaker)
 	if maker == "" {
 		maker = c.funderAddress
+	}
+	// POLY_1271 钱包由 CREATE2 确定性派生，缺省时直接计算 deposit wallet 地址，跳过 positions/orders 查询。
+	if maker == "" && c.signatureType == SignatureTypePoly1271 {
+		if c.signer == nil {
+			return "", errors.New("signer is required to derive deposit wallet address")
+		}
+		derived, err := DeriveDepositWalletAddress(c.signer.Address(), c.chainID)
+		if err != nil {
+			return "", fmt.Errorf("derive deposit wallet: %w", err)
+		}
+		maker = derived
 	}
 	if maker == "" && c.signatureType != SignatureTypeEOA && c.autoDiscoverFunder {
 		discovery, err := c.DiscoverFunder(ctx, FunderDiscoveryParams{

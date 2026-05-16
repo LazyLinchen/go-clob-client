@@ -22,6 +22,8 @@ const (
 	FunderCandidateSourceOrdersMakerAddress FunderCandidateSource = "orders.maker_address"
 	// FunderCandidateSourcePositionsProxyWallet 表示候选地址来自 positions 响应的 proxyWallet 字段。
 	FunderCandidateSourcePositionsProxyWallet FunderCandidateSource = "positions.proxyWallet"
+	// FunderCandidateSourceDepositWalletDerivation 表示候选地址来自 deposit wallet CREATE2 派生。
+	FunderCandidateSourceDepositWalletDerivation FunderCandidateSource = "depositWallet.derived"
 )
 
 // FunderCandidate 表示一个可用于下单 maker/funder 的候选地址。
@@ -74,6 +76,26 @@ func (c *Client) DiscoverFunder(ctx context.Context, params FunderDiscoveryParam
 		if c.signer != nil {
 			result.LookupUser = common.HexToAddress(c.signer.Address()).Hex()
 		}
+		return result, nil
+	}
+
+	// POLY_1271 钱包由 CREATE2 确定性派生，跳过历史 positions/orders 查询。
+	if c.signatureType == SignatureTypePoly1271 {
+		if c.signer == nil {
+			return nil, errors.New("signer is required to derive deposit wallet address")
+		}
+		eoa := common.HexToAddress(c.signer.Address()).Hex()
+		result.LookupUser = eoa
+		derived, err := DeriveDepositWalletAddress(eoa, c.chainID)
+		if err != nil {
+			return nil, fmt.Errorf("derive deposit wallet: %w", err)
+		}
+		candidate := FunderCandidate{
+			Address: derived,
+			Source:  FunderCandidateSourceDepositWalletDerivation,
+		}
+		result.Candidates = []FunderCandidate{candidate}
+		result.Preferred = &result.Candidates[0]
 		return result, nil
 	}
 

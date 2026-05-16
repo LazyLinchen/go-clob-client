@@ -269,6 +269,42 @@ func (c *Client) SignatureType() SignatureType {
 	return c.signatureType
 }
 
+// DepositWalletAddress 返回当前 signer 在所配置链上对应的 deposit wallet 地址。
+//
+// 行为：
+//   - 若未配置 FunderAddress，按 CREATE2 规则从 signer 地址派生。
+//   - 若已配置 FunderAddress 且 SignatureType 为 POLY_1271，会校验它与派生结果一致——
+//     防止误把 EOA 当成 deposit wallet 配置进来，链上 isValidSignature 拒签前就报错。
+//   - 其他签名类型直接返回 FunderAddress，因为旧的 proxy/safe 钱包也用同一字段表示。
+func (c *Client) DepositWalletAddress() (string, error) {
+	if c.signer == nil && c.funderAddress == "" {
+		return "", fmt.Errorf("signer is required to derive deposit wallet address")
+	}
+
+	if c.signatureType == SignatureTypePoly1271 {
+		if c.signer == nil {
+			return "", fmt.Errorf("signer is required to derive deposit wallet address")
+		}
+		derived, err := DeriveDepositWalletAddress(c.signer.Address(), c.chainID)
+		if err != nil {
+			return "", err
+		}
+		if c.funderAddress != "" && !strings.EqualFold(c.funderAddress, derived) {
+			return "", fmt.Errorf(
+				"configured FunderAddress %s does not match deposit wallet derived from signer (expected %s); "+
+					"clear FunderAddress to use derivation or fix the configured address",
+				c.funderAddress, derived,
+			)
+		}
+		return derived, nil
+	}
+
+	if c.funderAddress != "" {
+		return c.funderAddress, nil
+	}
+	return DeriveDepositWalletAddress(c.signer.Address(), c.chainID)
+}
+
 // CloseIdleConnections 主动关闭底层 HTTP 连接池中的空闲连接。
 func (c *Client) CloseIdleConnections() {
 	if c.httpClient != nil {
