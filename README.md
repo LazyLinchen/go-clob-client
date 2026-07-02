@@ -105,6 +105,33 @@ signedOrder, err := client.CreateOrder(ctx, clobclient.CreateOrderParams{
 
 签名类型 0/1/2（EOA / Polymarket Proxy / Gnosis Safe）行为不变，老账户继续可用。
 
+## 行情、市场、成交与激励接口
+
+公开行情（无需鉴权）：
+
+- 单条：`GetOrderBook` / `GetPrice` / `GetMidpoint` / `GetSpread` / `GetTickSize` / `GetNegRisk`
+- 批量：`GetOrderBooks` / `GetPrices` / `GetMidpoints` / `GetSpreads`（`GetPrices` 每项需带方向）
+
+市场列表（游标分页，`next_cursor` 到达末页返回 `LTE=`，即常量 `MarketsEndCursor`）：
+
+- `GetMarkets` / `GetSamplingMarkets`（完整 `Market`）
+- `GetSimplifiedMarkets` / `GetSamplingSimplifiedMarkets`（精简 `SimplifiedMarket`）
+- `GetMarket(conditionID)` 查询单个市场
+
+成交历史（需 L2 鉴权）：
+
+- `GetTrades(ctx, TradesParams{...})`，支持 `ID` / `MakerAddress` / `Market` / `AssetID` /
+  `Before` / `After` 过滤与 `NextCursor` 分页；响应兼容裸数组与分页信封。
+
+激励 / Rewards：
+
+- `GetUserRewardPercentages`（L2）：各市场实时激励占比
+- `GetUserEarnings(ctx, date, nextCursor)`（L2）：某日收益与各市场配置
+- `GetCurrentRewards(ctx, sponsored, nextCursor)`：当前开启激励的市场配置列表
+
+> 注：`GetCurrentRewards` 的市场级激励路径依据官方 CLI 与历史 SDK 推断、响应结构对照官方 docs 示例，
+> 首次接入建议对照线上返回核对一次。
+
 ## 测试
 
 本地确定性测试会排除 `TestIntegration...` live 测试：
