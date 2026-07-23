@@ -41,6 +41,9 @@ type MakerOrder struct {
 	Outcome       string       `json:"outcome"`
 	// Side 表示该 maker 订单的买卖方向，V2 新增字段。
 	Side string `json:"side"`
+	// BuilderFee 与 BuilderCode 仅在 builder order 成交时返回。
+	BuilderFee  NumberString `json:"builder_fee"`
+	BuilderCode string       `json:"builder_code"`
 }
 
 // Trade 表示成交历史接口返回的一条成交记录。
@@ -55,7 +58,9 @@ type Trade struct {
 	Price           NumberString `json:"price"`
 	Status          string       `json:"status"`
 	MatchTime       string       `json:"match_time"`
+	MatchTimeNano   string       `json:"match_time_nano"`
 	LastUpdate      string       `json:"last_update"`
+	ErrorMessage    string       `json:"err_msg"`
 	Outcome         string       `json:"outcome"`
 	BucketIndex     NumberString `json:"bucket_index"`
 	Owner           string       `json:"owner"`

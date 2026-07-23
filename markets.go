@@ -13,7 +13,7 @@ const (
 	endpointSamplingMarkets           = "/sampling-markets"
 	endpointSimplifiedMarkets         = "/simplified-markets"
 	endpointSamplingSimplifiedMarkets = "/sampling-simplified-markets"
-	endpointMarket                    = "/market/"
+	endpointMarket                    = "/markets/"
 
 	// MarketsEndCursor 是分页游标到达末页时服务端返回的哨兵值。
 	MarketsEndCursor = "LTE="

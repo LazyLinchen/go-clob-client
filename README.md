@@ -129,8 +129,8 @@ signedOrder, err := client.CreateOrder(ctx, clobclient.CreateOrderParams{
 - `GetUserEarnings(ctx, date, nextCursor)`（L2）：某日收益与各市场配置
 - `GetCurrentRewards(ctx, sponsored, nextCursor)`：当前开启激励的市场配置列表
 
-> 注：`GetCurrentRewards` 的市场级激励路径依据官方 CLI 与历史 SDK 推断、响应结构对照官方 docs 示例，
-> 首次接入建议对照线上返回核对一次。
+> 注：rewards 三个接口的路径均已对照官方 `@polymarket/clob-client-v2` 的 `endpoints.ts` 确认，
+> `GetCurrentRewards` 与市场列表接口已通过线上只读调用验证。
 
 ## 测试
 

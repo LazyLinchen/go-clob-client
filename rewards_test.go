@@ -17,6 +17,9 @@ func TestGetUserRewardPercentagesParsesMap(t *testing.T) {
 		if got := r.Header.Get(HeaderPolyAPIKey); got != "test-key" {
 			t.Fatalf("missing L2 API key header, got %q", got)
 		}
+		if got := r.URL.Query().Get("signature_type"); got != "0" {
+			t.Fatalf("signature_type = %q, want 0", got)
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"condition-1":"0.25","condition-2":"0.1"}`))
@@ -44,6 +47,9 @@ func TestGetUserEarningsSetsDateAndParsesEnvelope(t *testing.T) {
 		if got := r.URL.Query().Get("date"); got != "2026-06-15" {
 			t.Fatalf("date = %q, want 2026-06-15", got)
 		}
+		if got := r.URL.Query().Get("signature_type"); got != "0" {
+			t.Fatalf("signature_type = %q, want 0", got)
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
@@ -57,7 +63,10 @@ func TestGetUserEarningsSetsDateAndParsesEnvelope(t *testing.T) {
 				"question": "Will it rain?",
 				"rewards_min_size": "10",
 				"market_competitiveness": "0.9",
-				"tokens": [{"token_id":"token-1","outcome":"Yes","price":"0.5"}]
+				"tokens": [{"token_id":"token-1","outcome":"Yes","price":"0.5"}],
+				"maker_address": "0xmaker",
+				"earning_percentage": 12.5,
+				"earnings": [{"asset_address":"0xusdc","earnings":1.75,"asset_rate":0.5}]
 			}]
 		}`))
 	}))
@@ -75,6 +84,12 @@ func TestGetUserEarningsSetsDateAndParsesEnvelope(t *testing.T) {
 	entry := got.Data[0]
 	if entry.ConditionID != "condition-1" || entry.MarketID != "123" || entry.EventID != "evt-1" {
 		t.Fatalf("unexpected earnings entry = %+v", entry)
+	}
+	if entry.MakerAddress != "0xmaker" || entry.EarningPercentage != "12.5" {
+		t.Fatalf("unexpected maker earnings = %+v", entry)
+	}
+	if len(entry.Earnings) != 1 || entry.Earnings[0].Earnings != "1.75" {
+		t.Fatalf("unexpected earnings breakdown = %+v", entry.Earnings)
 	}
 }
 

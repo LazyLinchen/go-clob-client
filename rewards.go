@@ -4,17 +4,16 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
 const (
-	// endpointUserRewardPercentages 与 endpointUserEarnings 的路径已对照官方 docs 的
-	// "Get reward percentages for user" / "Get user earnings and markets configuration" 确认。
+	// 以下路径均已对照官方 @polymarket/clob-client-v2 的 endpoints.ts 确认：
+	// GET_LIQUIDITY_REWARD_PERCENTAGES / GET_REWARDS_EARNINGS_PERCENTAGES / GET_REWARDS_MARKETS_CURRENT。
 	endpointUserRewardPercentages = "/rewards/user/percentages"
 	endpointUserEarnings          = "/rewards/user/markets"
-	// endpointCurrentRewards 为市场级激励配置；路径依据历史 SDK 与官方 CLI 的 current-rewards
-	// 命令推断，响应结构对照官方 docs "current active rewards configurations" 示例。
-	endpointCurrentRewards = "/rewards/markets/current"
+	endpointCurrentRewards        = "/rewards/markets/current"
 )
 
 // RewardConfigEntry 表示某市场激励配置中的单条资产发放规则。
@@ -30,8 +29,13 @@ type RewardConfigEntry struct {
 // RewardsMarket 表示一个开启激励市场的当前激励配置。
 type RewardsMarket struct {
 	ConditionID        string              `json:"condition_id"`
+	Question           string              `json:"question"`
+	MarketSlug         string              `json:"market_slug"`
+	EventSlug          string              `json:"event_slug"`
+	Image              string              `json:"image"`
 	RewardsMaxSpread   NumberString        `json:"rewards_max_spread"`
 	RewardsMinSize     NumberString        `json:"rewards_min_size"`
+	Tokens             []MarketToken       `json:"tokens"`
 	RewardsConfig      []RewardConfigEntry `json:"rewards_config"`
 	SponsoredDailyRate NumberString        `json:"sponsored_daily_rate"`
 	SponsorsCount      int64               `json:"sponsors_count"`
@@ -47,6 +51,13 @@ type RewardsMarketsResponse struct {
 	Data       []RewardsMarket `json:"data"`
 }
 
+// RewardEarning 表示用户在某市场按资产维度的激励收益。
+type RewardEarning struct {
+	AssetAddress string       `json:"asset_address"`
+	Earnings     NumberString `json:"earnings"`
+	AssetRate    NumberString `json:"asset_rate"`
+}
+
 // UserRewardsMarket 表示用户在某市场的激励配置与收益信息。
 type UserRewardsMarket struct {
 	ConditionID           string              `json:"condition_id"`
@@ -54,6 +65,8 @@ type UserRewardsMarket struct {
 	EventID               NumberString        `json:"event_id"`
 	Question              string              `json:"question"`
 	MarketSlug            string              `json:"market_slug"`
+	EventSlug             string              `json:"event_slug"`
+	Image                 string              `json:"image"`
 	RewardsMaxSpread      NumberString        `json:"rewards_max_spread"`
 	RewardsMinSize        NumberString        `json:"rewards_min_size"`
 	Volume24hr            NumberString        `json:"volume_24hr"`
@@ -61,6 +74,9 @@ type UserRewardsMarket struct {
 	MarketCompetitiveness NumberString        `json:"market_competitiveness"`
 	Tokens                []MarketToken       `json:"tokens"`
 	RewardsConfig         []RewardConfigEntry `json:"rewards_config"`
+	MakerAddress          string              `json:"maker_address"`
+	EarningPercentage     NumberString        `json:"earning_percentage"`
+	Earnings              []RewardEarning     `json:"earnings"`
 }
 
 // UserEarningsResponse 表示用户激励收益列表接口的分页响应。
@@ -73,8 +89,10 @@ type UserEarningsResponse struct {
 
 // GetUserRewardPercentages 查询当前用户在各市场实时领取的激励占比，返回 condition_id -> 占比 的映射。
 func (c *Client) GetUserRewardPercentages(ctx context.Context) (map[string]NumberString, error) {
+	query := url.Values{"signature_type": []string{strconv.Itoa(int(c.signatureType))}}
+
 	var response map[string]NumberString
-	if err := c.doL2JSON(ctx, http.MethodGet, endpointUserRewardPercentages, nil, nil, &response); err != nil {
+	if err := c.doL2JSON(ctx, http.MethodGet, endpointUserRewardPercentages, query, nil, &response); err != nil {
 		return nil, err
 	}
 	return response, nil
@@ -85,14 +103,12 @@ func (c *Client) GetUserRewardPercentages(ctx context.Context) (map[string]Numbe
 // date 为可选的 YYYY-MM-DD 日期；留空时由服务端决定默认值。
 func (c *Client) GetUserEarnings(ctx context.Context, date string, nextCursor string) (*UserEarningsResponse, error) {
 	query := make(url.Values)
+	query.Set("signature_type", strconv.Itoa(int(c.signatureType)))
 	if value := strings.TrimSpace(date); value != "" {
 		query.Set("date", value)
 	}
 	if value := strings.TrimSpace(nextCursor); value != "" {
 		query.Set("next_cursor", value)
-	}
-	if len(query) == 0 {
-		query = nil
 	}
 
 	var response UserEarningsResponse
