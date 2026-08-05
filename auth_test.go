@@ -268,6 +268,65 @@ func TestCreateOrDeriveAPIKeyFallsBackToDerive(t *testing.T) {
 	}
 }
 
+func TestBuildL1HeadersRejectsPoly1271(t *testing.T) {
+	t.Parallel()
+
+	signer, err := NewPrivateKeySigner(testSignerPrivateKey)
+	if err != nil {
+		t.Fatalf("NewPrivateKeySigner() error = %v", err)
+	}
+	client, err := NewClient(ClientConfig{
+		Signer:        signer,
+		SignatureType: SignatureTypePoly1271,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	if _, err := client.BuildL1Headers(context.Background(), L1AuthParams{Timestamp: 1712345678}); err == nil {
+		t.Fatal("expected POLY_1271 L1 credential provisioning to be rejected")
+	}
+}
+
+func TestBuildL2HeadersPoly1271UsesDepositWalletAddress(t *testing.T) {
+	t.Parallel()
+
+	signer, err := NewPrivateKeySigner(testSignerPrivateKey)
+	if err != nil {
+		t.Fatalf("NewPrivateKeySigner() error = %v", err)
+	}
+	client, err := NewClient(ClientConfig{
+		ChainID:       137,
+		Signer:        signer,
+		SignatureType: SignatureTypePoly1271,
+		Credentials: &APICredentials{
+			Key:        "test-key",
+			Secret:     "c2VjcmV0",
+			Passphrase: "test-pass",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	headers, err := client.BuildL2Headers(context.Background(), L2HeaderArgs{
+		Method:      http.MethodGet,
+		RequestPath: "/data/orders",
+		Timestamp:   1712345678,
+	})
+	if err != nil {
+		t.Fatalf("BuildL2Headers() error = %v", err)
+	}
+
+	want, err := DeriveDepositWalletAddress(signer.Address(), 137)
+	if err != nil {
+		t.Fatalf("DeriveDepositWalletAddress() error = %v", err)
+	}
+	if got := headers.Get(HeaderPolyAddress); !strings.EqualFold(got, want) {
+		t.Fatalf("POLY_ADDRESS = %q, want deposit wallet %q", got, want)
+	}
+}
+
 func assertL1HeadersPresent(t *testing.T, r *http.Request) {
 	t.Helper()
 
