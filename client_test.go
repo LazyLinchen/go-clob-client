@@ -176,6 +176,14 @@ func TestNewClientWithProxyClonesCustomTransport(t *testing.T) {
 		Transport: originalTransport,
 	}
 
+	// DefaultTransport 的 Proxy 是 ProxyFromEnvironment，在设置了系统代理的机器上非 nil。
+	// 先取基线，之后断言 NewClient 未改变原 transport 的行为，避免测试对环境变量敏感。
+	req := httptest.NewRequest(http.MethodGet, "https://clob.polymarket.com/time", nil)
+	baselineProxyURL, err := originalTransport.Proxy(req)
+	if err != nil {
+		t.Fatalf("baseline Proxy() error = %v", err)
+	}
+
 	client, err := NewClient(ClientConfig{
 		HTTPClient: originalClient,
 		ProxyURL:   "http://127.0.0.1:7890",
@@ -196,7 +204,7 @@ func TestNewClientWithProxyClonesCustomTransport(t *testing.T) {
 		t.Fatal("expected proxy client to clone the provided transport")
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "https://clob.polymarket.com/time", nil)
+	req = httptest.NewRequest(http.MethodGet, "https://clob.polymarket.com/time", nil)
 	proxyURL, err := clonedTransport.Proxy(req)
 	if err != nil {
 		t.Fatalf("Proxy() error = %v", err)
@@ -209,8 +217,11 @@ func TestNewClientWithProxyClonesCustomTransport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("original Proxy() error = %v", err)
 	}
-	if originalProxyURL != nil {
-		t.Fatalf("original transport proxy = %v, want nil", originalProxyURL)
+	switch {
+	case baselineProxyURL == nil && originalProxyURL != nil:
+		t.Fatalf("original transport proxy = %v, want nil (unchanged)", originalProxyURL)
+	case baselineProxyURL != nil && (originalProxyURL == nil || originalProxyURL.String() != baselineProxyURL.String()):
+		t.Fatalf("original transport proxy = %v, want %v (unchanged)", originalProxyURL, baselineProxyURL)
 	}
 }
 

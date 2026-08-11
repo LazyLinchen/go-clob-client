@@ -27,6 +27,7 @@ type TickSize string
 const (
 	TickSizeTenth       TickSize = "0.1"
 	TickSizeCent        TickSize = "0.01"
+	TickSizeQuarterCent TickSize = "0.0025"
 	TickSizeMilli       TickSize = "0.001"
 	TickSizeTenThousand TickSize = "0.0001"
 )
@@ -42,7 +43,9 @@ const (
 )
 
 type orderRoundConfig struct {
-	price  int
+	// tick 是价格取整的最小跳动单位；价格向 tick 的整数倍取整，
+	// 以兼容 0.0025 这类非 10 的幂的 tick（对 10 的幂 tick 等价于按小数位取整）。
+	tick   *big.Rat
 	size   int
 	amount int
 }
@@ -615,16 +618,33 @@ func (c *Client) resolveBuilderTakerFeeBps(ctx context.Context, builder string, 
 func roundingConfigForTick(tickSize TickSize) (orderRoundConfig, error) {
 	switch tickSize {
 	case TickSizeTenth:
-		return orderRoundConfig{price: 1, size: 2, amount: 3}, nil
+		return orderRoundConfig{tick: mustRatFromDecimal("0.1"), size: 2, amount: 3}, nil
 	case TickSizeCent:
-		return orderRoundConfig{price: 2, size: 2, amount: 4}, nil
+		return orderRoundConfig{tick: mustRatFromDecimal("0.01"), size: 2, amount: 4}, nil
+	case TickSizeQuarterCent:
+		return orderRoundConfig{tick: mustRatFromDecimal("0.0025"), size: 2, amount: 6}, nil
 	case TickSizeMilli:
-		return orderRoundConfig{price: 3, size: 2, amount: 5}, nil
+		return orderRoundConfig{tick: mustRatFromDecimal("0.001"), size: 2, amount: 5}, nil
 	case TickSizeTenThousand:
-		return orderRoundConfig{price: 4, size: 2, amount: 6}, nil
+		return orderRoundConfig{tick: mustRatFromDecimal("0.0001"), size: 2, amount: 6}, nil
 	default:
 		return orderRoundConfig{}, fmt.Errorf("unsupported tickSize %q", tickSize)
 	}
+}
+
+func mustRatFromDecimal(s string) *big.Rat {
+	value, ok := new(big.Rat).SetString(s)
+	if !ok {
+		panic(fmt.Sprintf("order_builder: invalid decimal literal %q", s))
+	}
+	return value
+}
+
+// roundToTick 把 value 取整到 tick 的整数倍。对 10^-n 形式的 tick 与按 n 位小数取整等价。
+func roundToTick(value *big.Rat, tick *big.Rat, mode roundMode) *big.Rat {
+	ticks := new(big.Rat).Quo(value, tick)
+	rounded := roundRat(ticks, 0, mode)
+	return rounded.Mul(rounded, tick)
 }
 
 func buildOrderAmounts(side Side, size string, price string, roundConfig orderRoundConfig) (Side, string, string, error) {
@@ -642,7 +662,7 @@ func buildOrderAmounts(side Side, size string, price string, roundConfig orderRo
 		return "", "", "", err
 	}
 
-	roundedPrice := roundRat(priceRat, roundConfig.price, roundModeNormal)
+	roundedPrice := roundToTick(priceRat, roundConfig.tick, roundModeNormal)
 
 	var rawMakerAmount *big.Rat
 	var rawTakerAmount *big.Rat
@@ -687,7 +707,7 @@ func buildMarketOrderAmounts(side Side, amount string, price string, roundConfig
 	if roundedAmount.Sign() <= 0 {
 		return "", "", "", errors.New("amount rounds to zero")
 	}
-	roundedPrice := roundRat(priceRat, roundConfig.price, priceRoundMode)
+	roundedPrice := roundToTick(priceRat, roundConfig.tick, priceRoundMode)
 	if roundedPrice.Sign() <= 0 {
 		return "", "", "", errors.New("price rounds to zero")
 	}
@@ -834,7 +854,14 @@ func normalizeOrderType(orderType OrderType, defaultValue OrderType) (OrderType,
 	}
 }
 
+// maxDerivedAmountDecimals 限制派生金额（由价格乘除得出的另一侧金额）的小数位，
+// 保证换算成 6 位小数的 USDC 单位后末两位为 0——CLOB v2 拒绝非整百单位的金额。
+const maxDerivedAmountDecimals = 4
+
 func normalizeRawAmount(value *big.Rat, amountDecimals int) *big.Rat {
+	if amountDecimals > maxDerivedAmountDecimals {
+		amountDecimals = maxDerivedAmountDecimals
+	}
 	if decimalPlacesRat(value) <= amountDecimals {
 		return value
 	}
