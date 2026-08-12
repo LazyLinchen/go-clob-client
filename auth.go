@@ -118,12 +118,6 @@ func (c *Client) BuildL1Headers(ctx context.Context, params L1AuthParams) (http.
 	if c.signer == nil {
 		return nil, errors.New("L1 signer is not configured")
 	}
-	// POLY_1271 的 API 凭证绑定的是 deposit wallet 地址，而 L1 ClobAuth 签名只能证明
-	// EOA 身份；用 EOA 走 L1 开通会生成绑定到 EOA 的凭证，后续下单必被 CLOB 拒绝。
-	if c.signatureType == SignatureTypePoly1271 {
-		return nil, errors.New("L1 credential provisioning is not supported for POLY_1271; " +
-			"provision API credentials bound to the deposit wallet out of band")
-	}
 
 	timestamp := params.Timestamp
 	if timestamp == 0 {
@@ -245,18 +239,10 @@ func (c *Client) BuildL2Headers(ctx context.Context, args L2HeaderArgs) (http.He
 		return nil, err
 	}
 
-	// POLY_1271 的 API 凭证绑定在 deposit wallet 上，POLY_ADDRESS 必须与之一致；
-	// 其余签名类型沿用 EOA 地址。
-	polyAddress := c.signer.Address()
-	if c.signatureType == SignatureTypePoly1271 {
-		polyAddress, err = c.DepositWalletAddress()
-		if err != nil {
-			return nil, fmt.Errorf("resolve POLY_ADDRESS for POLY_1271: %w", err)
-		}
-	}
-
+	// 与官方 clob-client-v2 对齐：POLY_ADDRESS 一律为 signer EOA。API 凭证登记在
+	// EOA 名下（含 POLY_1271）；deposit wallet 只出现在订单载荷的 maker/funder 中。
 	headers := make(http.Header, 5)
-	headers.Set(HeaderPolyAddress, polyAddress)
+	headers.Set(HeaderPolyAddress, c.signer.Address())
 	headers.Set(HeaderPolySignature, signature)
 	headers.Set(HeaderPolyTimestamp, fmt.Sprintf("%d", timestamp))
 	headers.Set(HeaderPolyAPIKey, c.creds.credentialKey())

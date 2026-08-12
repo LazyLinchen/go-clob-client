@@ -268,7 +268,7 @@ func TestCreateOrDeriveAPIKeyFallsBackToDerive(t *testing.T) {
 	}
 }
 
-func TestBuildL1HeadersRejectsPoly1271(t *testing.T) {
+func TestBuildL1HeadersPoly1271UsesSignerAddress(t *testing.T) {
 	t.Parallel()
 
 	signer, err := NewPrivateKeySigner(testSignerPrivateKey)
@@ -283,12 +283,16 @@ func TestBuildL1HeadersRejectsPoly1271(t *testing.T) {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 
-	if _, err := client.BuildL1Headers(context.Background(), L1AuthParams{Timestamp: 1712345678}); err == nil {
-		t.Fatal("expected POLY_1271 L1 credential provisioning to be rejected")
+	headers, err := client.BuildL1Headers(context.Background(), L1AuthParams{Timestamp: 1712345678})
+	if err != nil {
+		t.Fatalf("BuildL1Headers() error = %v", err)
+	}
+	if got := headers.Get(HeaderPolyAddress); !strings.EqualFold(got, signer.Address()) {
+		t.Fatalf("POLY_ADDRESS = %q, want signer EOA %q", got, signer.Address())
 	}
 }
 
-func TestBuildL2HeadersPoly1271UsesDepositWalletAddress(t *testing.T) {
+func TestBuildL2HeadersPoly1271UsesSignerAddress(t *testing.T) {
 	t.Parallel()
 
 	signer, err := NewPrivateKeySigner(testSignerPrivateKey)
@@ -318,12 +322,10 @@ func TestBuildL2HeadersPoly1271UsesDepositWalletAddress(t *testing.T) {
 		t.Fatalf("BuildL2Headers() error = %v", err)
 	}
 
-	want, err := DeriveDepositWalletAddress(signer.Address(), 137)
-	if err != nil {
-		t.Fatalf("DeriveDepositWalletAddress() error = %v", err)
-	}
-	if got := headers.Get(HeaderPolyAddress); !strings.EqualFold(got, want) {
-		t.Fatalf("POLY_ADDRESS = %q, want deposit wallet %q", got, want)
+	// 与官方 clob-client-v2 一致：POLY_1271 的 L2 头仍用 signer EOA，
+	// deposit wallet 只进订单载荷，不参与鉴权。
+	if got := headers.Get(HeaderPolyAddress); !strings.EqualFold(got, signer.Address()) {
+		t.Fatalf("POLY_ADDRESS = %q, want signer EOA %q", got, signer.Address())
 	}
 }
 
