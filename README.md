@@ -72,6 +72,39 @@ if err != nil {
 
 ## POLY_1271 / Deposit Wallet
 
+### 根据地址识别签名类型
+
+已知签名 EOA 和实际资金钱包地址时，可本地识别签名类型，无需私钥、API 凭证或 RPC：
+
+```go
+signatureType, err := clobclient.DetectSignatureType(signerAddress, walletAddress, 137)
+if err != nil {
+    return err // 未知钱包可用 errors.Is(err, clobclient.ErrUnknownWallet) 判断
+}
+```
+
+已有配置了 `Signer` 的客户端时，可同时应用类型和资金地址：
+
+```go
+client, err = client.WithDetectedSignatureType(walletAddress)
+if err != nil {
+    return err
+}
+// 后续 CreateOrder / CreateMarketOrder 使用识别出的类型和资金地址。
+```
+
+`WithDetectedSignatureType` 返回新客户端，不修改原实例；保留凭证、网络等配置。
+失败时返回 nil 客户端，请先处理错误。识别失败的类型值为 `SignatureTypeUnknown` (-1)。
+
+Polygon (137) 支持 EOA、官方 Proxy、Safe、当前 beacon Deposit Wallet；Amoy (80002)
+支持 EOA 和本库内置配置的 Deposit Wallet。其他链返回错误。
+识别依据是 EOA 地址相等或 CREATE2 派生地址匹配，不证明钱包已部署、资金充足或权限有效。
+仅凭小狐狸/邮箱登录方式或一个 EOA 地址，无法判断实际使用哪个资金钱包。
+未知地址、自定义 Safe、session signer，以及当前签名校验不支持的 Polygon 历史 UUPS Deposit Wallet
+会返回错误，不自动回退到 EOA 或 POLY_1271。`AutoDiscoverFunder` 原有行为不变，不会自动启用类型识别。
+
+### Deposit Wallet 配置
+
 针对 2026 年后开通的新 API 用户（每用户一个 ERC-1967 proxy deposit wallet），库内置 CREATE2
 地址派生与 ERC-7739 包裹签名，与官方 `@polymarket/clob-client-v2` 字节级一致。
 

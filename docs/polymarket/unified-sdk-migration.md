@@ -113,3 +113,19 @@ TDD RED：`go test ./... -run '^TestUnified' -count=1` 首次因缺少版本参�
 - `go test ./... -run '^Test[^I]' -race -count=1`：未能启动，环境 `CGO_ENABLED=0`，且未找到 gcc/clang；不作为通过的验证项目。
 
 本地保留 TDD 检查点：`49e579d`（RED）和 `ecf288b`（GREEN）。后续测试增加了批量提交和错误路径覆盖。未执行任何 `TestIntegration...` 测试，也未提交真实交易。
+
+## 后续增补：签名类型识别
+
+新增 `DetectSignatureType(signerAddress, walletAddress, chainID)` 和客户端方法
+`WithDetectedSignatureType(walletAddress)`。使用相同官方源码提交中 `wallet.ts` 的 Proxy/Safe
+CREATE2 公式、`environments.ts` 的 Polygon 配置以及本库已有 Deposit Wallet 派生逻辑。
+`signature_detection_test.go` 的 Polygon 四类型固定向量来自官方 `wallet.test.ts`，不是本库自生成期望值。
+
+该接口只识别当前签名实现支持的钱包，未知地址返回 `SignatureTypeUnknown` 与 `ErrUnknownWallet`。
+与官方针对未知地址的 session-key 默认回退不同，本库不支持 session signer，因此不回退。
+不自动查询资金地址，不验证部署或授权，不修改 `AutoDiscoverFunder` 的行为；用法与链支持范围见根 README。
+
+验证：新增测试首次因 API 缺失编译失败（RED，`22c6e83`），实现后通过（GREEN）。
+非 live 全量测试通过，覆盖率 62.9%；识别主函数覆盖率 93.1%，地址校验与客户端复制方法均为 100%。
+`go build ./...`、`go vet ./...`、`git diff --check` 通过。未运行 live 测试。
+同时保留前次四签名类型的 64 组合测试 `signature_types_test.go`。
