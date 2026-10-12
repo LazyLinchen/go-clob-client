@@ -36,7 +36,9 @@ const (
 type ExchangeProtocolVersion string
 
 const (
+	// ExchangeProtocolV2 使用传统 CTF token 的 Exchange V2 域。
 	ExchangeProtocolV2 ExchangeProtocolVersion = "2"
+	// ExchangeProtocolV3 使用协议 V2 position 的 Exchange V3 域。
 	ExchangeProtocolV3 ExchangeProtocolVersion = "3"
 )
 
@@ -54,9 +56,9 @@ func (v ExchangeProtocolVersion) normalized() (ExchangeProtocolVersion, error) {
 type SignOrderV2Options struct {
 	// ProtocolVersion 留空使用 V2；V3 用于统一 SDK 的协议 V2 position。
 	ProtocolVersion ExchangeProtocolVersion
-	// ExchangeAddress 允许显式覆盖 verifyingContract；留空时按 ChainID 和 NegRisk 选择默认 V2 合约。
+	// ExchangeAddress 允许覆盖 verifyingContract；留空时按版本、链和 NegRisk 选择合约。
 	ExchangeAddress string
-	// NegRisk 控制默认合约选择。
+	// NegRisk 控制 V2 默认合约选择；V3 共用同一 Exchange。
 	NegRisk bool
 }
 
@@ -99,7 +101,7 @@ type SignedOrderV2Payload struct {
 	Signature     string        `json:"signature"`
 }
 
-// SignOrderV2 对已有 V2 订单生成 EIP-712 签名。
+// SignOrderV2 对已有 V2 格式订单生成 EIP-712 签名，域版本由 options.ProtocolVersion 选择。
 //
 // 对 SignatureType 0/1/2（EOA、Proxy、Gnosis Safe），输出标准 65 字节 ECDSA 签名。
 // 对 SignatureType 3（POLY_1271 / Deposit Wallet），输出 ERC-7739 包裹签名，
@@ -320,7 +322,7 @@ func BuildOrderV2TypedData(order OrderV2, chainID int64, exchangeAddress string)
 }
 
 // buildPoly1271TypedData 构造 POLY_1271 内层 ERC-7739 TypedDataSign 的 EIP-712 typed data。
-// 外层 EIP712Domain 仍是 CTF Exchange V2，内层字段引用 order.Signer 处的 DepositWallet 域。
+// 此 helper 默认生成 V2 域；签名入口会按 ProtocolVersion 设置外层域，内层仍为 DepositWallet。
 func buildPoly1271TypedData(order OrderV2, chainID int64, exchangeAddress string) (apitypes.TypedData, error) {
 	orderMessage, err := orderV2Message(order)
 	if err != nil {

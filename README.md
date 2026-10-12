@@ -4,6 +4,13 @@
 
 `go-clob-client` 是 Polymarket CLOB API 的 Go 客户端库，包名为 `clobclient`。
 
+已对照官方统一 SDK `Polymarket/ts-sdk` 补充订单精度、签名域及账户接口。
+具体来源版本、兼容变化和未覆盖能力见 [统一 SDK 对照与迁移说明](docs/polymarket/unified-sdk-migration.md)。
+
+本次新增 `TickSizeHalfCent`、`UpdateBalanceAllowance`、`GetOrdersScoringStatus`，
+并支持通过 `ProtocolVersion: ExchangeProtocolV3` 显式签名协议 V2 position 的订单。
+原有调用默认继续使用 Exchange V2 域；SDK 的版本、资产协议版本和签名域版本是不同概念。
+
 ## 安装
 
 ```powershell

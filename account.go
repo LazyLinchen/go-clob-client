@@ -154,7 +154,6 @@ func (c *Client) UpdateBalanceAllowance(ctx context.Context, params BalanceAllow
 }
 
 func (c *Client) balanceAllowanceQuery(params BalanceAllowanceParams) (url.Values, error) {
-
 	assetType := AssetType(strings.ToUpper(strings.TrimSpace(string(params.AssetType))))
 	switch assetType {
 	case AssetTypeCollateral:

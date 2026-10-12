@@ -279,3 +279,61 @@ func TestUnifiedGeneratedSalt(t *testing.T) {
 		}
 	}
 }
+
+func TestUnifiedBatchPosting(t *testing.T) {
+	calls := 0
+	c := unifiedHTTPClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		body, _ := io.ReadAll(r.Body)
+		var orders []struct {
+			Order     SignedOrderV2Payload `json:"order"`
+			OrderType string               `json:"orderType"`
+		}
+		if err := json.Unmarshal(body, &orders); err != nil {
+			t.Error(err)
+		}
+		if r.Method != "POST" || r.URL.Path != "/orders" || len(orders) != 15 {
+			t.Errorf("invalid batch: %s %s %d", r.Method, r.URL.Path, len(orders))
+		}
+		for _, order := range orders {
+			if order.Order.Salt != 12345 || order.OrderType != "GTC" {
+				t.Errorf("invalid order: %+v", order)
+			}
+		}
+		want, err := buildPolyHMACSignature("c2VjcmV0", mustTimestamp(t, r.Header.Get("POLY_TIMESTAMP")), r.Method, r.URL.Path, body)
+		if err != nil || r.Header.Get("POLY_SIGNATURE") != want {
+			t.Error("batch HMAC mismatch")
+		}
+		io.WriteString(w, `[{"success":true,"orderID":"one"},{"success":false,"errorMsg":"rejected"}]`)
+	})
+	o, err := c.CreateOrder(context.Background(), CreateOrderParams{TokenID: "123", Price: "0.5", Size: "10", Side: SideBuy, TickSize: TickSizeCent, Salt: "12345"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := make([]PostOrderRequest, 15)
+	for i := range requests {
+		requests[i].Order = o
+	}
+	response, err := c.PostOrders(context.Background(), requests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response) != 2 || !response[0].Success || response[1].Success || response[1].ErrorMsg != "rejected" {
+		t.Fatalf("response: %+v", response)
+	}
+	if _, err := c.PostOrders(context.Background(), nil); err == nil {
+		t.Fatal("empty batch accepted")
+	}
+	if _, err := c.PostOrders(context.Background(), append(requests, requests[0])); err == nil {
+		t.Fatal("oversized batch accepted")
+	}
+	postOnly := true
+	requests[7].OrderType = "FOK"
+	requests[7].PostOnly = &postOnly
+	if _, err := c.PostOrders(context.Background(), requests); err == nil || !strings.Contains(err.Error(), "order 7") {
+		t.Fatalf("invalid batch order: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("invalid batch sent to server: %d calls", calls)
+	}
+}
