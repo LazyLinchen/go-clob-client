@@ -130,6 +130,30 @@ func (c *Client) GetBalanceAllowance(ctx context.Context, params BalanceAllowanc
 	if c.signer == nil {
 		return nil, errors.New("l1 signer is not configured")
 	}
+	query, err := c.balanceAllowanceQuery(params)
+	if err != nil {
+		return nil, err
+	}
+	var response BalanceAllowanceResponse
+	if err := c.doL2JSON(ctx, http.MethodGet, endpointBalanceAllowance, query, nil, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+// UpdateBalanceAllowance 刷新服务端余额/授权缓存，再返回最新余额；不会发送链上 approve 交易。
+func (c *Client) UpdateBalanceAllowance(ctx context.Context, params BalanceAllowanceParams) (*BalanceAllowanceResponse, error) {
+	query, err := c.balanceAllowanceQuery(params)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.doL2JSON(ctx, http.MethodGet, endpointBalanceAllowance+"/update", query, nil, nil); err != nil {
+		return nil, err
+	}
+	return c.GetBalanceAllowance(ctx, params)
+}
+
+func (c *Client) balanceAllowanceQuery(params BalanceAllowanceParams) (url.Values, error) {
 
 	assetType := AssetType(strings.ToUpper(strings.TrimSpace(string(params.AssetType))))
 	switch assetType {
@@ -150,11 +174,7 @@ func (c *Client) GetBalanceAllowance(ctx context.Context, params BalanceAllowanc
 		query.Set("token_id", tokenID)
 	}
 
-	var response BalanceAllowanceResponse
-	if err := c.doL2JSON(ctx, http.MethodGet, endpointBalanceAllowance, query, nil, &response); err != nil {
-		return nil, err
-	}
-	return &response, nil
+	return query, nil
 }
 
 // GetPositions 按给定条件查询用户持仓列表。

@@ -25,14 +25,35 @@ const (
 	polygonNegRiskExchangeV2 = "0xe2222d279d744050d28e00520010520000310F59"
 	amoyExchangeV2           = "0xE111180000d2663C0091e4f400237545B87B996B"
 	amoyNegRiskExchangeV2    = "0xe2222d279d744050d28e00520010520000310F59"
+	polygonExchangeV3        = "0xe3333700cA9d93003F00f0F71f8515005F6c00Aa"
 
 	// orderTypeString 是 CTF Exchange V2 Order 结构的 EIP-712 类型字符串，POLY_1271 包裹签名的尾部需要原文附上。
 	// 必须与 clob-client-v2/src/order-utils/exchangeOrderBuilderV2.ts 中的 ORDER_TYPE_STRING 完全一致。
 	orderTypeString = "Order(uint256 salt,address maker,address signer,uint256 tokenId,uint256 makerAmount,uint256 takerAmount,uint8 side,uint8 signatureType,uint256 timestamp,bytes32 metadata,bytes32 builder)"
 )
 
+// ExchangeProtocolVersion 是 EIP-712 Exchange 域版本，不是 SDK 或资产协议版本。
+type ExchangeProtocolVersion string
+
+const (
+	ExchangeProtocolV2 ExchangeProtocolVersion = "2"
+	ExchangeProtocolV3 ExchangeProtocolVersion = "3"
+)
+
+func (v ExchangeProtocolVersion) normalized() (ExchangeProtocolVersion, error) {
+	if v == "" {
+		return ExchangeProtocolV2, nil
+	}
+	if v != ExchangeProtocolV2 && v != ExchangeProtocolV3 {
+		return "", fmt.Errorf("unsupported exchange protocol version %q", v)
+	}
+	return v, nil
+}
+
 // SignOrderV2Options 描述签名已有 V2 订单时的合约选择。
 type SignOrderV2Options struct {
+	// ProtocolVersion 留空使用 V2；V3 用于统一 SDK 的协议 V2 position。
+	ProtocolVersion ExchangeProtocolVersion
 	// ExchangeAddress 允许显式覆盖 verifyingContract；留空时按 ChainID 和 NegRisk 选择默认 V2 合约。
 	ExchangeAddress string
 	// NegRisk 控制默认合约选择。
@@ -119,6 +140,11 @@ func (c *Client) SignOrderV2(ctx context.Context, order OrderV2, options SignOrd
 	if err != nil {
 		return nil, err
 	}
+	version, err := options.ProtocolVersion.normalized()
+	if err != nil {
+		return nil, err
+	}
+	typedData.Domain.Version = string(version)
 
 	signature, err := c.signer.SignTypedData(ctx, typedData)
 	if err != nil {
@@ -164,6 +190,11 @@ func (c *Client) signOrderV2Poly1271(ctx context.Context, order OrderV2, options
 	if err != nil {
 		return nil, err
 	}
+	version, err := options.ProtocolVersion.normalized()
+	if err != nil {
+		return nil, err
+	}
+	typedData.Domain.Version = string(version)
 
 	innerSigHex, err := c.signer.SignTypedData(ctx, typedData)
 	if err != nil {
@@ -213,10 +244,20 @@ func (c *Client) signOrderV2Poly1271(ctx context.Context, order OrderV2, options
 }
 
 func (c *Client) resolveExchangeV2Address(options SignOrderV2Options) (string, error) {
+	version, err := options.ProtocolVersion.normalized()
+	if err != nil {
+		return "", err
+	}
 	exchangeAddress := strings.TrimSpace(options.ExchangeAddress)
 	if exchangeAddress == "" {
-		var err error
-		exchangeAddress, err = exchangeV2Address(c.chainID, options.NegRisk)
+		if version == ExchangeProtocolV3 {
+			if c.chainID != 137 {
+				return "", fmt.Errorf("no default Exchange V3 for chain %d; provide ExchangeAddress", c.chainID)
+			}
+			exchangeAddress = polygonExchangeV3
+		} else {
+			exchangeAddress, err = exchangeV2Address(c.chainID, options.NegRisk)
+		}
 		if err != nil {
 			return "", err
 		}
@@ -233,8 +274,8 @@ func (o SignedOrderV2) Payload() (*SignedOrderV2Payload, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse order salt: %w", err)
 	}
-	if salt < 0 {
-		return nil, errors.New("order salt must be non-negative")
+	if salt < 0 || salt > 1<<53-1 {
+		return nil, errors.New("order salt must be between 0 and 9007199254740991")
 	}
 
 	payload := &SignedOrderV2Payload{

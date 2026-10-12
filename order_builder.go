@@ -27,6 +27,7 @@ type TickSize string
 const (
 	TickSizeTenth       TickSize = "0.1"
 	TickSizeCent        TickSize = "0.01"
+	TickSizeHalfCent    TickSize = "0.005"
 	TickSizeQuarterCent TickSize = "0.0025"
 	TickSizeMilli       TickSize = "0.001"
 	TickSizeTenThousand TickSize = "0.0001"
@@ -52,6 +53,8 @@ type orderRoundConfig struct {
 
 // CreateOrderParams 描述本地构造并签名 V2 限价单所需的参数。
 type CreateOrderParams struct {
+	// ProtocolVersion 选择 Exchange 签名域版本；留空保留 V2，协议 V2 position 使用 V3。
+	ProtocolVersion ExchangeProtocolVersion
 	// Maker 是实际出资地址，留空时优先使用客户端 FunderAddress，再回退到 signer 地址。
 	Maker string
 	// TokenID 是要交易的条件 token ID。
@@ -82,6 +85,8 @@ type CreateOrderParams struct {
 
 // CreateMarketOrderParams 描述本地构造并签名 V2 market order 所需的参数。
 type CreateMarketOrderParams struct {
+	// ProtocolVersion 选择 Exchange 签名域版本；留空保留 V2。
+	ProtocolVersion ExchangeProtocolVersion
 	// Maker 是实际出资地址，留空时优先使用客户端 FunderAddress，再回退到 signer 地址。
 	Maker string
 	// TokenID 是要交易的条件 token ID。
@@ -158,7 +163,7 @@ func (c *Client) CreateOrder(ctx context.Context, params CreateOrderParams) (*Si
 	if err != nil {
 		return nil, err
 	}
-	return c.SignOrderV2(ctx, order, SignOrderV2Options{NegRisk: params.NegRisk})
+	return c.SignOrderV2(ctx, order, SignOrderV2Options{NegRisk: params.NegRisk, ProtocolVersion: params.ProtocolVersion})
 }
 
 // CreateMarketOrder 按官方 SDK V2 规则构造并签名一笔 market order。
@@ -167,11 +172,14 @@ func (c *Client) CreateMarketOrder(ctx context.Context, params CreateMarketOrder
 	if err != nil {
 		return nil, err
 	}
-	return c.SignOrderV2(ctx, order, SignOrderV2Options{NegRisk: params.NegRisk})
+	return c.SignOrderV2(ctx, order, SignOrderV2Options{NegRisk: params.NegRisk, ProtocolVersion: params.ProtocolVersion})
 }
 
 // CreatePostOrderRequest 构造可直接传给 PostOrder 的 V2 下单请求。
 func (c *Client) CreatePostOrderRequest(ctx context.Context, params CreatePostOrderRequestParams) (*PostOrderRequest, error) {
+	if err := validatePostOnly(params.PostOnly, params.OrderType, OrderTypeGTC); err != nil {
+		return nil, err
+	}
 	owner := strings.TrimSpace(params.Owner)
 	if owner == "" {
 		owner = c.defaultOwner()
@@ -212,6 +220,9 @@ func (c *Client) CreatePostOrderRequest(ctx context.Context, params CreatePostOr
 
 // CreatePostMarketOrderRequest 构造可直接传给 PostOrder 的 V2 market order 请求。
 func (c *Client) CreatePostMarketOrderRequest(ctx context.Context, params CreatePostMarketOrderRequestParams) (*PostOrderRequest, error) {
+	if err := validatePostOnly(params.PostOnly, params.OrderType, OrderTypeFOK); err != nil {
+		return nil, err
+	}
 	owner := strings.TrimSpace(params.Owner)
 	if owner == "" {
 		owner = c.defaultOwner()
@@ -621,6 +632,8 @@ func roundingConfigForTick(tickSize TickSize) (orderRoundConfig, error) {
 		return orderRoundConfig{tick: mustRatFromDecimal("0.1"), size: 2, amount: 3}, nil
 	case TickSizeCent:
 		return orderRoundConfig{tick: mustRatFromDecimal("0.01"), size: 2, amount: 4}, nil
+	case TickSizeHalfCent:
+		return orderRoundConfig{tick: mustRatFromDecimal("0.005"), size: 2, amount: 5}, nil
 	case TickSizeQuarterCent:
 		return orderRoundConfig{tick: mustRatFromDecimal("0.0025"), size: 2, amount: 6}, nil
 	case TickSizeMilli:
@@ -669,11 +682,11 @@ func buildOrderAmounts(side Side, size string, price string, roundConfig orderRo
 	if normalizedSide == SideBuy {
 		rawTakerAmount = roundRat(sizeRat, roundConfig.size, roundModeDown)
 		rawMakerAmount = new(big.Rat).Mul(rawTakerAmount, roundedPrice)
-		rawMakerAmount = normalizeRawAmount(rawMakerAmount, roundConfig.amount)
+		rawMakerAmount = roundRat(rawMakerAmount, roundConfig.amount, roundModeDown)
 	} else {
 		rawMakerAmount = roundRat(sizeRat, roundConfig.size, roundModeDown)
 		rawTakerAmount = new(big.Rat).Mul(rawMakerAmount, roundedPrice)
-		rawTakerAmount = normalizeRawAmount(rawTakerAmount, roundConfig.amount)
+		rawTakerAmount = roundRat(rawTakerAmount, roundConfig.amount, roundModeDown)
 	}
 
 	makerAmount, err := decimalToUnits(rawMakerAmount, collateralTokenDecimals, "makerAmount")
@@ -1061,7 +1074,7 @@ func sideUint8(side Side) (int64, error) {
 }
 
 func generateOrderSalt() (string, error) {
-	max := big.NewInt(time.Now().UnixMilli() + 1)
+	max := new(big.Int).Lsh(big.NewInt(1), 53)
 	value, err := rand.Int(rand.Reader, max)
 	if err != nil {
 		return "", fmt.Errorf("generate order salt: %w", err)

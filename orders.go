@@ -372,6 +372,25 @@ func (c *Client) SendHeartbeat(ctx context.Context, heartbeatID string) (*Heartb
 
 // normalizePostOrderRequest 清洗单笔下单请求，避免把空 owner 或无效 JSON 传给服务端。
 func (c *Client) normalizePostOrderRequest(request PostOrderRequest) (PostOrderRequest, error) {
+	orderType, err := normalizeOrderType(OrderType(request.OrderType), OrderTypeGTC)
+	if err != nil {
+		return PostOrderRequest{}, err
+	}
+	if err := validatePostOnly(request.PostOnly != nil && *request.PostOnly, orderType, OrderTypeGTC); err != nil {
+		return PostOrderRequest{}, err
+	}
+	switch order := request.Order.(type) {
+	case SignedOrderV2:
+		request.Order, err = order.Payload()
+	case *SignedOrderV2:
+		if order == nil {
+			return PostOrderRequest{}, errors.New("order is required")
+		}
+		request.Order, err = order.Payload()
+	}
+	if err != nil {
+		return PostOrderRequest{}, err
+	}
 	order, err := normalizeEmbeddedJSON(request.Order, "order")
 	if err != nil {
 		return PostOrderRequest{}, err
@@ -388,10 +407,38 @@ func (c *Client) normalizePostOrderRequest(request PostOrderRequest) (PostOrderR
 	return PostOrderRequest{
 		Order:     order,
 		Owner:     owner,
-		OrderType: strings.TrimSpace(request.OrderType),
+		OrderType: string(orderType),
 		PostOnly:  request.PostOnly,
 		DeferExec: request.DeferExec,
 	}, nil
+}
+
+func validatePostOnly(postOnly bool, orderType OrderType, defaultType OrderType) error {
+	typ, err := normalizeOrderType(orderType, defaultType)
+	if err != nil {
+		return err
+	}
+	if postOnly && typ != OrderTypeGTC && typ != OrderTypeGTD {
+		return errors.New("post-only orders require GTC or GTD")
+	}
+	return nil
+}
+
+// GetOrdersScoringStatus 批量查询订单是否参与奖励评分。
+func (c *Client) GetOrdersScoringStatus(ctx context.Context, orderIDs []string) (map[string]bool, error) {
+	ids, err := normalizeOrderIDs(orderIDs)
+	if err != nil {
+		return nil, err
+	}
+	var response map[string]bool
+	body, err := encodeJSON(ids)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.doL2JSON(ctx, http.MethodPost, "/orders-scoring", nil, body, &response); err != nil {
+		return nil, err
+	}
+	return response, nil
 }
 
 // normalizePostOrderRequests 清洗批量下单请求，并应用服务端允许的数量限制。
